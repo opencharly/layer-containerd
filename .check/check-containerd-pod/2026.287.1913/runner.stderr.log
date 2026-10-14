@@ -1,0 +1,21 @@
+WARNING: charly is a dev/worktree build (not installed at /usr/bin or /usr/local/bin); NOT loading the installed package's plugins from /usr/lib/charly/plugins (they may be built against a different charly version). Set CHARLY_PLUGIN_DIR to load plugins from a custom location.
+Removed /home/atrawog/.config/containers/systemd/charly-check-containerd-pod.container
+Reloaded systemd user daemon
+charly check run check-containerd-pod: [image-build] START (charly box build; log: .check/check-containerd-pod/2026.287.1913/image-build.log)
+charly check run check-containerd-pod: [image-build] PASS after 1m11.39s [allowlisted=1 cache=11/38] (log: .check/check-containerd-pod/2026.287.1913/image-build.log)
+charly check run check-containerd-pod: [check-image] START (charly check box; log: .check/check-containerd-pod/2026.287.1913/check-image.log)
+charly check run check-containerd-pod: [check-image] PASS after 19.956s [allowlisted=1] (log: .check/check-containerd-pod/2026.287.1913/check-image.log)
+charly check run check-containerd-pod: [deploy-add] START (charly deploy add; log: .check/check-containerd-pod/2026.287.1913/deploy-add.log)
+charly check run check-containerd-pod: [deploy-add] PASS after 9.557s [allowlisted=1] (log: .check/check-containerd-pod/2026.287.1913/deploy-add.log)
+charly check run check-containerd-pod: [config] START (charly config; log: .check/check-containerd-pod/2026.287.1913/config.log)
+charly check run check-containerd-pod: [config] PASS after 5.96s [allowlisted=1] (log: .check/check-containerd-pod/2026.287.1913/config.log)
+charly check run check-containerd-pod: [start] START (charly start; log: .check/check-containerd-pod/2026.287.1913/start.log)
+charly check run check-containerd-pod: [start] PASS after 5.254s [allowlisted=1] (log: .check/check-containerd-pod/2026.287.1913/start.log)
+charly check run check-containerd-pod: [bring-up-members] START
+charly check run check-containerd-pod: [bring-up-members] PASS after 88ms
+charly check run check-containerd-pod: [check-live] START (charly check live; log: .check/check-containerd-pod/2026.287.1913/check-live.log)
+charly check run check-containerd-pod: [check-live] FAIL after 23.218s: exit 2: charly subcommand exited 2 (log: .check/check-containerd-pod/2026.287.1913/check-live.log)
+
+[charly check run] bed "check-containerd-pod" FAILED — pod left running for debugging.
+  inspect: charly check live check-containerd-pod | podman exec charly-check-containerd-pod sh
+  destroy: charly remove check-containerd-pod

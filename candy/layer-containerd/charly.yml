@@ -30,6 +30,19 @@ layer-containerd:
             - name: containerd
               use_packaged: containerd.service
         plan:
+            # The daemon needs /var/lib/containerd and /run/containerd. The package creates them owned by
+            # root, and a POD runs its init as uid 1000 - where a service user=root setting is inert,
+            # because a uid-1000 supervisord cannot setuid. Measured twice: the daemon died on its own
+            # first mkdir (mkdir /var/lib/containerd: permission denied) and the socket never appeared. So
+            # the layer makes the daemon directories writable by the identity that will run it, which is
+            # what lets it start in a pod AND in a VM.
+            - run: prepare the daemon state and root directories for the identity that will run it
+              id: containerd-dirs
+              run_as: root
+              command: |
+                set -eu
+                mkdir -p /var/lib/containerd /run/containerd
+                chown -R 1000:1000 /var/lib/containerd /run/containerd
             - run: write the containerd config with the snapshotter this layer was asked for
               id: containerd-config
               write: /etc/containerd/config.toml

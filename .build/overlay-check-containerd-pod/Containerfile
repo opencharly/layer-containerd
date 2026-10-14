@@ -1,9 +1,0 @@
-# Overlay Containerfile for deploy "check-containerd-pod"
-# Extra candies: 
-
-FROM localhost/check-containerd-pod:check-containerd-pod-2026.287.1908
-
-USER root
-
-
-USER user

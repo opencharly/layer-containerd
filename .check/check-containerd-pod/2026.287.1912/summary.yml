@@ -1,0 +1,49 @@
+bed: check-containerd-pod
+calver: 2026.287.1912
+driver: /home/atrawog/Sync/Atrapub/no/dsh/opencharly/charly/bin/charly
+driver_version: 2026.286.0739
+driver_size: 52832269
+driver_mtime: 2026-10-14T17:48:56Z
+runner_stderr: runner.stderr.log
+steps:
+  - name: image-build
+    duration_seconds: 6
+    ok: false
+    diagnostics:
+      errors: 1
+      warnings: 1
+      advisories: 0
+      allowlisted: 1
+      findings:
+        - severity: error
+          count: 1
+          pattern: severity-prefix
+          first_line: 4
+          text: "charly: error: command \"build\": rendering Containerfiles: generating Containerfile for check-containerd-pod: build-config asset \"templates/supervisord.header.conf\" cannot be resolved: it is not in the…"
+        - severity: warning
+          count: 1
+          pattern: severity-prefix
+          first_line: 1
+          allowlisted: dev-worktree-binary-notice
+          text: "WARNING: charly is a dev/worktree build (not installed at /usr/bin or /usr/local/bin); NOT loading the installed package's plugins from /usr/lib/charly/plugins (they may be built against a different c…"
+        - severity: warning
+          count: 1
+          pattern: severity-prefix
+          first_line: 2
+          text: "warning: box \"check-containerd-pod\" resolves init \"supervisord\", which depends on the \"supervisord\" candy, but that candy is not in this project's scanned set — the fetch that should have materializ…"
+total_seconds: 6
+diagnostics:
+  errors: 1
+  warnings: 1
+  advisories: 0
+  allowlisted: 1
+  errors_fatal: true
+  warnings_fatal: false
+  advisories_fatal: false
+  cache_ratio: not-applicable-no-build-steps
+  allowlist_used:
+    - id: dev-worktree-binary-notice
+      severity: warning
+      suppressed: 1
+      why: "A dev/worktree charly binary (the in-development build every charly check bed installs via the charly-dev candy) is not at the FHS location that owns /usr/lib/charly/plugins, so it deliberately skips the installed package's plugins (built against a different charly version, issue #328) and says so once per process. Observed live in every check-charly-vm step log when the host has a packaged charly install. Informational dev-build behavior — not an error; suppressing it would mean silently loading plugins built against a different API version."
+ok: false

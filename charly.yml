@@ -10,28 +10,49 @@ discover:
 # `ctr plugins ls` — the check the ledger asks for. A pod has no spare block device, which is exactly the
 # DEVICE-LESS case: the native snapshotter must be `ok` there, and the devmapper path must skip VISIBLY
 # rather than fail obscurely.
-check-containerd-pod:
-    pod:
-        image: check-containerd-pod
-        disposable: true
-        lifecycle: test
+containerd-service:
+    local:
         description: >-
-            The containerd layer on a real pod: the daemon starts with the config this layer rendered,
-            and `ctr plugins ls` reports the declared snapshotter `ok`. This is the device-less bed — the
-            case the ledger requires to be VISIBLE, not silently missing.
-        plan:
-            - check: containerd starts with the rendered config
-              id: containerd-starts
-              run_as: root
-              command: |
-                set -eu
-                containerd --config /etc/containerd/config.toml > /tmp/containerd.log 2>&1 &
-                for i in $(seq 1 40); do ctr version >/dev/null 2>&1 && break; sleep 0.25; done
-                ctr version
-            - check: the declared snapshotter is ok in ctr plugins ls
-              id: snapshotter-ok
-              run_as: root
-              command: |
-                set -eu
-                ctr plugins ls | grep -E '^[a-z].*snapshotter' | sed -n '1,10p'
-                ctr plugins ls | awk '$1 ~ /snapshotter/ {print $NF}' | grep -qx ok
+            The containerd layer applied inside a guest: the daemon installed from the distro, the
+            version-2 config rendered on the device-less snapshotter, and the packaged unit enabled so the
+            guest's own systemd runs it as root.
+        candy:
+            - layer-containerd
+
+containerd-vm-base:
+    vm:
+        source:
+            # The rolling Arch cloud image, the same spelling the sibling layer's bed uses (dated pkgbuild
+            # paths rotate away, opencharly/charly#826).
+            kind: cloud_image
+            url: https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2
+            base_user: arch
+            distro: arch
+        backend: libvirt
+        disk_size: 20G
+        ram: 4G
+        cpu: 2
+        machine: q35
+        firmware: bios
+        ssh:
+            port_auto: true
+            key_source: generate
+        cloud_init:
+            timezone: UTC
+            package:
+                - sudo
+
+check-containerd-vm:
+    vm:
+        from: containerd-vm-base
+        disposable: true
+        lifecycle: dev
+        description: >-
+            The containerd layer on a disposable guest: the candy installs the daemon and renders the
+            config, the guest's own systemd runs the packaged unit AS ROOT (which is what a pod cannot do),
+            and the plan asserts on the RUNNING guest that the declared snapshotter reports ok in
+            `ctr plugins ls` — the check the ledger names. A pod has no root to offer, so this is the
+            substrate containerd actually belongs to.
+        check-containerd-vm-member:
+            local:
+                from: containerd-service
