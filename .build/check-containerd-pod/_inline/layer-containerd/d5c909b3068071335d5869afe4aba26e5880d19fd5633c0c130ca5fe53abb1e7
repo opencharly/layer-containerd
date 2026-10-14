@@ -1,0 +1,13 @@
+# Written by the charly containerd layer. The snapshotter is the one declared to the
+# build; `native` needs no block device, `devmapper` needs an LVM thin pool that this
+# layer does not create for you.
+version = 2
+root = "/var/lib/containerd"
+state = "/run/containerd"
+
+[plugins."io.containerd.grpc.v1.cri".containerd]
+  snapshotter = "native"
+  disable_snapshot_annotations = false
+
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+  runtime_type = "io.containerd.runc.v2"

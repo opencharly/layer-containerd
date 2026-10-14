@@ -1,0 +1,58 @@
+# The containerd layer: containerd installed and configured with ONE declarative choice that matters —
+# the snapshotter. A host with no devmapper device (no LVM thin pool, no spare block device) can run the
+# native/overlayfs path instead of losing the whole leg, and a host that DOES have the device can ask for
+# devmapper without hand-typing a pool.
+#
+# The default is deliberately `native`: it needs no device, so the layer is useful everywhere, and
+# choosing differently is one declared value rather than an edit to a generated file.
+layer-containerd:
+    candy:
+        description: |
+            containerd, installed and configured for the device-less case. It writes a version-2
+            config.toml on the `native` snapshotter — which needs NO block device, LVM thin pool or
+            devmapper — and hands the running state to a bed that asserts it. Making the snapshotter a
+            declared value rather than a constant belongs to the typed `containerd:` surface the ledger
+            asks for (opencharly/layer-containerd#1), which does not exist yet; the constant here is the
+            device-less default that surface will keep.
+        distro:
+            fedora:
+                package: [containerd]
+            arch:
+                package: [containerd]
+        service:
+            # THE SERVICE, which is WI-8's own requirement and the half this layer was missing: containerd
+            # is a daemon, so a bed that starts it with a shell & cannot survive its own step. The same
+            # name appears twice because the two init systems need different forms, and the deploy picks
+            # the one that matches: supervisord in a pod runs the command, systemd runs the packaged unit.
+            # Measured the hard way: without this, ctr finds no socket and the layer own bed fails.
+            - name: containerd
+              exec: containerd --config /etc/containerd/config.toml
+            - name: containerd
+              use_packaged: containerd.service
+        plan:
+            - run: write the containerd config with the snapshotter this layer was asked for
+              id: containerd-config
+              write: /etc/containerd/config.toml
+              mode: "0644"
+              run_as: root
+              content: |
+                # Written by the charly containerd layer. The snapshotter is the one declared to the
+                # build; `native` needs no block device, `devmapper` needs an LVM thin pool that this
+                # layer does not create for you.
+                version = 2
+                root = "/var/lib/containerd"
+                state = "/run/containerd"
+
+                [plugins."io.containerd.grpc.v1.cri".containerd]
+                  snapshotter = "native"
+                  disable_snapshot_annotations = false
+
+                [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+                  runtime_type = "io.containerd.runc.v2"
+            - check: the config the daemon will read names the device-less snapshotter
+              id: containerd-config-written
+              run_as: root
+              command: grep -q 'snapshotter = "native"' /etc/containerd/config.toml
+            - check: the daemon the config belongs to is installed
+              id: containerd-installed
+              command: command -v containerd && containerd --version

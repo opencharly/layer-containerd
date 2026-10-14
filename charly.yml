@@ -1,0 +1,37 @@
+# Makes this layer repo a PROJECT so its candy is gated, and carries the R10 witness.
+discover:
+    - path: box
+      recursive: true
+    - path: candy
+      recursive: true
+
+# The witness: a disposable POD running the layer's own image. containerd is a daemon, so what must be
+# asserted is that it STARTS with the rendered config and that the declared snapshotter reports `ok` in
+# `ctr plugins ls` — the check the ledger asks for. A pod has no spare block device, which is exactly the
+# DEVICE-LESS case: the native snapshotter must be `ok` there, and the devmapper path must skip VISIBLY
+# rather than fail obscurely.
+check-containerd-pod:
+    pod:
+        image: check-containerd-pod
+        disposable: true
+        lifecycle: test
+        description: >-
+            The containerd layer on a real pod: the daemon starts with the config this layer rendered,
+            and `ctr plugins ls` reports the declared snapshotter `ok`. This is the device-less bed — the
+            case the ledger requires to be VISIBLE, not silently missing.
+        plan:
+            - check: containerd starts with the rendered config
+              id: containerd-starts
+              run_as: root
+              command: |
+                set -eu
+                containerd --config /etc/containerd/config.toml > /tmp/containerd.log 2>&1 &
+                for i in $(seq 1 40); do ctr version >/dev/null 2>&1 && break; sleep 0.25; done
+                ctr version
+            - check: the declared snapshotter is ok in ctr plugins ls
+              id: snapshotter-ok
+              run_as: root
+              command: |
+                set -eu
+                ctr plugins ls | grep -E '^[a-z].*snapshotter' | sed -n '1,10p'
+                ctr plugins ls | awk '$1 ~ /snapshotter/ {print $NF}' | grep -qx ok

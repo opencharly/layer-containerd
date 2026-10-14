@@ -1,0 +1,155 @@
+WARNING: charly is a dev/worktree build (not installed at /usr/bin or /usr/local/bin); NOT loading the installed package's plugins from /usr/lib/charly/plugins (they may be built against a different charly version). Set CHARLY_PLUGIN_DIR to load plugins from a custom location.
+
+--- Building check-containerd-pod ---
+[2/2] STEP 1/21: FROM quay.io/fedora/fedora:43
+[2/2] STEP 2/21: RUN --mount=type=cache,id=charly-var-cache-libdnf5,dst=/var/cache/libdnf5,sharing=locked     printf 'max_parallel_downloads=10\nfastestmirror=True\n' >> /etc/dnf/dnf.conf &&     dnf install -y --setopt=install_weak_deps=False curl ca-certificates tar gzip &&     rm -f /etc/yum.repos.d/terra-mesa.repo 2>/dev/null || true &&     { [ -L /usr/local ] && mkdir -p "$(readlink /usr/local)"; mkdir -p /usr/local/bin; } &&     ARCH=$(uname -m) &&     case "$ARCH" in x86_64) ARCH=amd64;; aarch64) ARCH=arm64;; esac &&     TASK_URL="https://github.com/go-task/task/releases/latest/download/task_linux_${ARCH}.tar.gz" &&     (curl -fsSL "$TASK_URL" || wget -qO- "$TASK_URL") | tar -xzf - -C /usr/local/bin task
+--> Using cache 30b897b8cb83ec69a2d483bf63a7615c72d004646c98ad7860e24f416b75302e
+--> 30b897b8cb83
+[2/2] STEP 3/21: RUN if ! getent passwd 1000 >/dev/null 2>&1; then       LOGIN_SHELL=/bin/sh; [ -x /bin/bash ] && LOGIN_SHELL=/bin/bash;       if command -v useradd >/dev/null 2>&1; then         (getent group 1000 >/dev/null 2>&1 || groupadd -g 1000 user) &&         useradd -m -u 1000 -g 1000 -s "$LOGIN_SHELL" user;       else         (getent group 1000 >/dev/null 2>&1 || addgroup -g 1000 user) &&         adduser -D -h /home/user -u 1000 -G user -s "$LOGIN_SHELL" user;       fi;     fi
+--> Using cache cf46881fa6d769b01de2ec7af3c7473c1f49c5e0754f31bebd53c6770db538c9
+--> cf46881fa6d7
+[2/2] STEP 4/21: WORKDIR /home/user
+--> Using cache 0a6577cce252676e9dc4a603fc5575defc8efa61cca74c1f2e37925f23025cef
+--> 0a6577cce252
+[2/2] STEP 5/21: ARG TARGETARCH
+--> e3d6fe94f453
+[2/2] STEP 6/21: ENV ARCH=${TARGETARCH}
+--> 74c78d73cf7f
+[2/2] STEP 7/21: RUN --mount=type=cache,id=charly-var-cache-libdnf5,dst=/var/cache/libdnf5,sharing=locked     dnf install -y       containerd
+Updating and loading repositories:
+Repositories loaded.
+Total size of inbound packages is 42 MiB. Need to download 42 MiB.
+After this operation, 135 MiB extra will be used (install 135 MiB, remove 0 B).
+Package                  Arch   Version                 Repository      Size
+Installing:
+ containerd              x86_64 2.2.8-1.fc43            updates     92.6 MiB
+Installing dependencies:
+ diffutils               x86_64 3.12-3.fc43             fedora       1.6 MiB
+ iptables-libs           x86_64 1.8.11-12.fc43          updates      1.5 MiB
+ jansson                 x86_64 2.14-3.fc43             fedora      89.1 KiB
+ libbsd                  x86_64 0.12.2-6.fc43           fedora     423.2 KiB
+ libedit                 x86_64 3.1-58.20260512cvs.fc43 updates    240.3 KiB
+ libfdisk                x86_64 2.41.5-1.fc43           updates    380.3 KiB
+ liblastlog2             x86_64 2.41.5-1.fc43           updates     37.6 KiB
+ libmd                   x86_64 1.2.0-1.fc43            updates    124.5 KiB
+ libmnl                  x86_64 1.0.5-8.fc43            fedora      51.1 KiB
+ libnet                  x86_64 1.3-6.fc43              fedora     132.5 KiB
+ libnetfilter_conntrack  x86_64 1.1.1-1.fc43            updates    143.8 KiB
+ libnfnetlink            x86_64 1.0.1-31.fc43           fedora      50.1 KiB
+ libnftnl                x86_64 1.2.9-2.fc43            fedora     229.2 KiB
+ libnl3                  x86_64 3.12.0-2.fc43           updates      1.0 MiB
+ libpathrs               x86_64 0.2.6-1.fc43            updates    678.4 KiB
+ libseccomp              x86_64 2.6.1-2.fc43            updates    218.2 KiB
+ libselinux-utils        x86_64 3.9-5.fc43              fedora     309.0 KiB
+ nftables                x86_64 1:1.1.3-6.fc43.1        updates      1.0 MiB
+ nftables-services       noarch 1:1.1.3-6.fc43.1        updates     32.1 KiB
+ policycoreutils         x86_64 3.9-7.fc43              updates    685.6 KiB
+ protobuf-c              x86_64 1.5.2-1.fc43            updates     49.8 KiB
+ rpm-plugin-selinux      x86_64 6.0.2-1.fc43            updates     11.9 KiB
+ runc                    x86_64 2:1.5.2-3.fc43          updates      9.2 MiB
+ selinux-policy          noarch 43.10-1.fc43            updates     32.0 KiB
+ selinux-policy-targeted noarch 43.10-1.fc43            updates     18.6 MiB
+ util-linux              x86_64 2.41.5-1.fc43           updates      3.5 MiB
+Installing weak dependencies:
+ container-selinux       noarch 4:2.251.0-1.fc43        updates     75.7 KiB
+ criu                    x86_64 4.2.1-1.fc43            updates      1.7 MiB
+
+Transaction Summary:
+ Installing:        29 packages
+
+[ 1/29] container-selinux-4:2.251.0-1.f 100% | 392.7 KiB/s |  58.1 KiB |  00m00s
+[ 2/29] selinux-policy-0:43.10-1.fc43.n 100% | 402.3 KiB/s |  64.4 KiB |  00m00s
+[ 3/29] libseccomp-0:2.6.1-2.fc43.x86_6 100% | 403.6 KiB/s |  75.1 KiB |  00m00s
+[ 4/29] libmd-0:1.2.0-1.fc43.x86_64     100% |   2.0 MiB/s |  54.4 KiB |  00m00s
+[ 5/29] criu-0:4.2.1-1.fc43.x86_64      100% |   3.0 MiB/s | 601.2 KiB |  00m00s
+[ 6/29] rpm-plugin-selinux-0:6.0.2-1.fc 100% | 266.1 KiB/s |  16.8 KiB |  00m00s
+[ 7/29] libpathrs-0:0.2.6-1.fc43.x86_64 100% |   1.2 MiB/s | 280.8 KiB |  00m00s
+[ 8/29] libbsd-0:0.12.2-6.fc43.x86_64   100% | 478.5 KiB/s | 122.5 KiB |  00m00s
+[ 9/29] libnet-0:1.3-6.fc43.x86_64      100% | 226.7 KiB/s |  60.1 KiB |  00m00s
+[10/29] libselinux-utils-0:3.9-5.fc43.x 100% | 446.5 KiB/s | 119.2 KiB |  00m00s
+[11/29] policycoreutils-0:3.9-7.fc43.x8 100% |   2.5 MiB/s | 214.7 KiB |  00m00s
+[12/29] diffutils-0:3.12-3.fc43.x86_64  100% |   4.4 MiB/s | 392.3 KiB |  00m00s
+[13/29] util-linux-0:2.41.5-1.fc43.x86_ 100% |  11.5 MiB/s |   1.2 MiB |  00m00s
+[14/29] protobuf-c-0:1.5.2-1.fc43.x86_6 100% |   1.0 MiB/s |  32.7 KiB |  00m00s
+[15/29] runc-2:1.5.2-3.fc43.x86_64      100% |   9.2 MiB/s |   3.2 MiB |  00m00s
+[16/29] nftables-1:1.1.3-6.fc43.1.x86_6 100% |   4.4 MiB/s | 423.3 KiB |  00m00s
+[17/29] libnl3-0:3.12.0-2.fc43.x86_64   100% |   2.9 MiB/s | 366.3 KiB |  00m00s
+[18/29] nftables-services-1:1.1.3-6.fc4 100% | 230.1 KiB/s |  21.2 KiB |  00m00s
+[19/29] liblastlog2-0:2.41.5-1.fc43.x86 100% | 467.6 KiB/s |  23.8 KiB |  00m00s
+[20/29] libedit-0:3.1-58.20260512cvs.fc 100% |   2.3 MiB/s | 105.2 KiB |  00m00s
+[21/29] libfdisk-0:2.41.5-1.fc43.x86_64 100% |   2.0 MiB/s | 162.3 KiB |  00m00s
+[22/29] libnftnl-0:1.2.9-2.fc43.x86_64  100% | 684.8 KiB/s |  84.9 KiB |  00m00s
+[23/29] jansson-0:2.14-3.fc43.x86_64    100% | 294.0 KiB/s |  45.3 KiB |  00m00s
+[24/29] libnetfilter_conntrack-0:1.1.1- 100% | 954.8 KiB/s |  60.2 KiB |  00m00s
+[25/29] libmnl-0:1.0.5-8.fc43.x86_64    100% | 172.8 KiB/s |  28.0 KiB |  00m00s
+[26/29] libnfnetlink-0:1.0.1-31.fc43.x8 100% | 402.6 KiB/s |  29.4 KiB |  00m00s
+[27/29] iptables-libs-0:1.8.11-12.fc43. 100% |   2.8 MiB/s | 403.3 KiB |  00m00s
+[28/29] selinux-policy-targeted-0:43.10 100% |  20.0 MiB/s |   6.8 MiB |  00m00s
+[29/29] containerd-0:2.2.8-1.fc43.x86_6 100% |  37.0 MiB/s |  27.5 MiB |  00m01s
+--------------------------------------------------------------------------------
+[29/29] Total                           100% |  33.0 MiB/s |  42.4 MiB |  00m01s
+Running transaction
+[ 1/31] Verify package files            100% |  51.0   B/s |  29.0   B |  00m01s
+[ 2/31] Prepare transaction             100% | 329.0   B/s |  29.0   B |  00m00s
+[ 3/31] Installing libmnl-0:1.0.5-8.fc4 100% |  12.8 MiB/s |  52.5 KiB |  00m00s
+[ 4/31] Installing libselinux-utils-0:3 100% |   9.6 MiB/s | 323.2 KiB |  00m00s
+[ 5/31] Installing libnftnl-0:1.2.9-2.f 100% |  75.0 MiB/s | 230.3 KiB |  00m00s
+[ 6/31] Installing libnfnetlink-0:1.0.1 100% |  16.8 MiB/s |  51.5 KiB |  00m00s
+[ 7/31] Installing libnetfilter_conntra 100% |  35.4 MiB/s | 144.9 KiB |  00m00s
+[ 8/31] Installing iptables-libs-0:1.8. 100% |  34.2 MiB/s |   1.5 MiB |  00m00s
+[ 9/31] Installing libedit-0:3.1-58.202 100% |  59.1 MiB/s | 242.0 KiB |  00m00s
+[10/31] Installing liblastlog2-0:2.41.5 100% |   2.1 MiB/s |  39.5 KiB |  00m00s
+[11/31] Installing libfdisk-0:2.41.5-1. 100% |  53.2 MiB/s | 381.4 KiB |  00m00s
+[12/31] Installing util-linux-0:2.41.5- 100% |  32.4 MiB/s |   3.6 MiB |  00m00s
+[13/31] Installing protobuf-c-0:1.5.2-1 100% |  16.7 MiB/s |  51.4 KiB |  00m00s
+[14/31] Installing jansson-0:2.14-3.fc4 100% |  44.2 MiB/s |  90.5 KiB |  00m00s
+[15/31] Installing nftables-1:1.1.3-6.f 100% |  31.1 MiB/s |   1.0 MiB |  00m00s
+[16/31] Installing nftables-services-1: 100% |   2.2 MiB/s |  33.3 KiB |  00m00s
+[17/31] Installing libnl3-0:3.12.0-2.fc 100% |  74.8 MiB/s |   1.0 MiB |  00m00s
+[18/31] Installing diffutils-0:3.12-3.f 100% |  52.0 MiB/s |   1.6 MiB |  00m00s
+[19/31] Installing policycoreutils-0:3. 100% |  15.2 MiB/s | 713.8 KiB |  00m00s
+[20/31] Installing selinux-policy-0:43. 100% | 559.6 KiB/s |  33.6 KiB |  00m00s
+[21/31] Installing selinux-policy-targe 100% |  43.1 MiB/s |  14.9 MiB |  00m00s
+[22/31] Installing libmd-0:1.2.0-1.fc43 100% |  41.1 MiB/s | 126.1 KiB |  00m00s
+[23/31] Installing libbsd-0:0.12.2-6.fc 100% | 138.2 MiB/s | 424.7 KiB |  00m00s
+[24/31] Installing libnet-0:1.3-6.fc43. 100% |  65.4 MiB/s | 134.0 KiB |  00m00s
+[25/31] Installing libseccomp-0:2.6.1-2 100% |  43.0 MiB/s | 220.0 KiB |  00m00s
+[26/31] Installing libpathrs-0:0.2.6-1. 100% |  95.0 MiB/s | 680.9 KiB |  00m00s
+[27/31] Installing runc-2:1.5.2-3.fc43. 100% |  96.7 MiB/s |   9.2 MiB |  00m00s
+[28/31] Installing containerd-0:2.2.8-1 100% | 105.8 MiB/s |  92.7 MiB |  00m01s
+[29/31] Installing criu-0:4.2.1-1.fc43. 100% |  27.4 MiB/s |   1.7 MiB |  00m00s
+[30/31] Installing container-selinux-4: 100% |   3.3 KiB/s |  79.2 KiB |  00m24s
+[31/31] Installing rpm-plugin-selinux-0 100% |   1.1 KiB/s |  12.9 KiB |  00m12s
+Complete!
+--> 8b81ef1a63a7
+[2/2] STEP 8/21: RUN mkdir -p /etc/containerd
+--> d75cf7745de8
+[2/2] STEP 9/21: COPY --chmod=0644 .build/check-containerd-pod/_inline/layer-containerd/d5c909b3068071335d5869afe4aba26e5880d19fd5633c0c130ca5fe53abb1e7 /etc/containerd/config.toml
+--> a4b0456640ac
+[2/2] STEP 10/21: USER 1000
+--> 3e4545e73543
+[2/2] STEP 11/21: LABEL ai.opencharly.box="check-containerd-pod"
+--> 5d800d99a569
+[2/2] STEP 12/21: LABEL ai.opencharly.uid="1000"
+--> 300112d1b643
+[2/2] STEP 13/21: LABEL ai.opencharly.gid="1000"
+--> bd9eeeaa8222
+[2/2] STEP 14/21: LABEL ai.opencharly.user="user"
+--> 7e0707739946
+[2/2] STEP 15/21: LABEL ai.opencharly.home="/home/user"
+--> 7aafb9f0df1e
+[2/2] STEP 16/21: LABEL ai.opencharly.platform.distro='["fedora"]'
+--> 91fb68abc060
+[2/2] STEP 17/21: LABEL ai.opencharly.platform.format='["rpm"]'
+--> 14b4f2cb80f4
+[2/2] STEP 18/21: LABEL ai.opencharly.description='{"candy":[{"origin":"candy:layer-containerd","description":"containerd, installed and configured for the device-less case. It writes a version-2\nconfig.toml on the `native` snapshotter — which needs NO block device, LVM thin pool or\ndevmapper — and hands the running state to a bed that asserts it. Making the snapshotter a\ndeclared value rather than a constant belongs to the typed `containerd:` surface the ledger\nasks for (opencharly/layer-containerd#1), which does not exist yet; the constant here is the\ndevice-less default that surface will keep.\n","plan":[{"check":"the config the daemon will read names the device-less snapshotter","plugin":"command","id":"containerd-config-written","plugin_input":{"command":"grep -q '\''snapshotter = \"native\"'\'' /etc/containerd/config.toml"},"run_as":"root","intent_do":"assert"},{"check":"the daemon the config belongs to is installed","plugin":"command","id":"containerd-installed","plugin_input":{"command":"command -v containerd \u0026\u0026 containerd --version"},"intent_do":"assert"}]}],"box":[{"origin":"box:check-containerd-pod","description":"Disposable bed image for the containerd layer'\''s R10 — a Fedora base composing the layer under test."}]}'
+--> dc3cb0f57f26
+[2/2] STEP 19/21: LABEL ai.opencharly.status="testing"
+--> 779bbb19540e
+[2/2] STEP 20/21: LABEL ai.opencharly.check_level="noagent"
+--> d7aab2838c94
+[2/2] STEP 21/21: LABEL ai.opencharly.info='Disposable bed image for the containerd layer'\''s R10 — a Fedora base composing the layer under test.; layer-containerd: containerd, installed and configured for the device-less case. It writes a version-2'
+[2/2] COMMIT check-containerd-pod:check-containerd-pod-2026.287.1908
+--> fe3319750630
+Successfully tagged localhost/check-containerd-pod:check-containerd-pod-2026.287.1908
+fe3319750630c45fef8da9cf71c892f17a3c5a827729315ec24d026807b81359

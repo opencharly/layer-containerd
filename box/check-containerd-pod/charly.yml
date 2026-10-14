@@ -1,0 +1,10 @@
+# The bed's image: a Fedora base composing the layer, so the daemon and the rendered config under test are
+# the ones the layer produces — never a hand-installed copy.
+check-containerd-pod:
+    candy:
+        description: Disposable bed image for the containerd layer's R10 — a Fedora base composing the layer under test.
+        distro: [fedora]
+        build: [rpm]
+        base: quay.io/fedora/fedora:43
+        candy:
+            - layer-containerd
