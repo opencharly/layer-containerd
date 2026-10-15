@@ -56,3 +56,50 @@ check-containerd-vm:
         check-containerd-vm-member:
             local:
                 from: containerd-service
+        plan:
+            # MEASURED: this bed previously had NO plan at all - its own description promised one
+            # ("the plan asserts on the RUNNING guest that the declared snapshotter reports ok in
+            # `ctr plugins ls`") and the check-phase log said "No plan steps defined for this image".
+            # A bed that deploys, checks nothing and cleans up reports PASS (steps=15) and proves
+            # NOTHING - the vacuous-gate failure this leg has hit three times now. These are the
+            # assertions the description already claimed.
+            - check: the packaged containerd unit is RUNNING, not merely installed and enabled
+              id: containerd-unit-active
+              command: |
+                set -eu
+                # The change this bed gates is `enable: true`: the unit must be enabled AND active.
+                # MEASURED on layer-fireactions#1's bed: the unit read
+                # "Loaded: loaded (...; disabled; preset: disabled)" and only `systemctl is-active`
+                # failed - so both halves are asserted here, and each reports itself.
+                if ! systemctl is-enabled containerd.service >/dev/null 2>&1; then
+                  echo "containerd.service is NOT enabled:" >&2
+                  systemctl status containerd.service --no-pager 2>&1 | head -6 >&2
+                  exit 1
+                fi
+                if ! systemctl is-active containerd.service >/dev/null 2>&1; then
+                  echo "containerd.service is enabled but NOT active:" >&2
+                  systemctl status containerd.service --no-pager 2>&1 | head -6 >&2
+                  journalctl -u containerd.service -n 20 --no-pager 2>&1 | tail -12 >&2
+                  exit 1
+                fi
+                systemctl is-enabled containerd.service
+                systemctl is-active containerd.service
+            - check: the declared snapshotter reports ok in ctr plugins ls
+              id: containerd-snapshotter-ok
+              command: |
+                set -eu
+                # MEASURED, first run: the list printed "blockfile ... skip" and charly TRUNCATED the
+                # rest, so the row that decides this - native - was cut off. Two changes follow: assert
+                # on native SPECIFICALLY (the config declares native, not "native or blockfile"), and
+                # print only the snapshotter rows so the answer fits inside charly's stderr cap and
+                # cannot be truncated away.
+                sudo -n ctr plugins ls 2>&1 | grep -E 'TYPE|snapshotter' > /tmp/ctr-snap.txt || {
+                  echo "ctr plugins ls produced no snapshotter rows:" >&2
+                  sudo -n ctr plugins ls 2>&1 | head -20 >&2
+                  exit 1; }
+                cat /tmp/ctr-snap.txt
+                if ! grep -E 'snapshotter.*[[:space:]]native[[:space:]].*[[:space:]]ok' /tmp/ctr-snap.txt >/dev/null 2>&1; then
+                  echo "the DECLARED native snapshotter is not ok - the rows above are the whole answer" >&2
+                  exit 1
+                fi
+                echo "native snapshotter: ok"
