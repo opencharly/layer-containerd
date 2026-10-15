@@ -29,6 +29,14 @@ layer-containerd:
               exec: containerd --config /etc/containerd/config.toml
             - name: containerd
               use_packaged: containerd.service
+              # MEASURED on a real VM (layer-fireactions#1's bed): the packaged unit loads but reads
+              # "Loaded: loaded (...; disabled; preset: disabled)" - the distro ships containerd
+              # DISABLED, and `enable:` defaults to false. Without this the substrate's own
+              # precondition step ("containerd is present with the device-less snapshotter") cannot
+              # pass, even though the config it checks IS correct: the snapshotter grep above it
+              # succeeds and only `systemctl is-active` fails. The field is `enable`, not `enabled` -
+              # spec/schema/boxmetadata.cue:55, and CUE's closed schema rejects the wrong spelling.
+              enable: true
         plan:
             # The daemon needs /var/lib/containerd and /run/containerd. The package creates them owned by
             # root, and a POD runs its init as uid 1000 - where a service user=root setting is inert,
