@@ -103,3 +103,13 @@ check-containerd-vm:
                   exit 1
                 fi
                 echo "native snapshotter: ok"
+                # And the capability this change ADDS. The native assertion above passes with or without it,
+                # so without this the bed could not fail for the property the change introduces (R7: a test
+                # that cannot fail is invalid). MEASURED before the change: `blockfile ... skip`, and the
+                # fireactions server refused to start on a guest whose only root-drive-capable snapshotter
+                # it accepts is this one.
+                if ! grep -E 'snapshotter.*[[:space:]]blockfile[[:space:]].*[[:space:]]ok' /tmp/ctr-snap.txt >/dev/null 2>&1; then
+                  echo "blockfile is not ok - a Firecracker pool cannot back a root drive without it; the rows above are the whole answer" >&2
+                  exit 1
+                fi
+                echo "blockfile snapshotter: ok"

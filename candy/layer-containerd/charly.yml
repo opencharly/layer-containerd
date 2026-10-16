@@ -9,16 +9,19 @@ layer-containerd:
     candy:
         description: |
             containerd, installed and configured for the device-less case. It writes a version-2
-            config.toml on the `native` snapshotter — which needs NO block device, LVM thin pool or
-            devmapper — and hands the running state to a bed that asserts it. Making the snapshotter a
-            declared value rather than a constant belongs to the typed `containerd:` surface the ledger
-            asks for (opencharly/layer-containerd#1), which does not exist yet; the constant here is the
-            device-less default that surface will keep.
+            config.toml whose CRI default is the `native` snapshotter, and it ENABLES the `blockfile`
+            snapshotter plugin so a microVM pool can be backed by a root drive without an LVM thin pool.
+            The preparation step creates and formats the scratch image that the blockfile plugin clones,
+            because that plugin loads as `error` without one (MEASURED: "failed to copy scratch: failed
+            to open source .../scratch_file: no such file or directory"). The daemon-reported assertion
+            lives in this repo's own bed `check-containerd-vm`, which is where the substrate is asserted;
+            this candy writes the config and prepares the directories it needs. A fully declared
+            snapshotter and scratch size belong to the typed `containerd:` surface the ledger asks for.
         distro:
             fedora:
-                package: [containerd]
+                package: [containerd, e2fsprogs]
             arch:
-                package: [containerd]
+                package: [containerd, e2fsprogs]
         service:
             # THE SERVICE, which is WI-8's own requirement and the half this layer was missing: containerd
             # is a daemon, so a bed that starts it with a shell & cannot survive its own step. The same
@@ -51,6 +54,21 @@ layer-containerd:
                 set -eu
                 mkdir -p /var/lib/containerd /run/containerd
                 chown -R 1000:1000 /var/lib/containerd /run/containerd
+                # The blockfile snapshotter CLONES a pre-existing, FORMATTED scratch image, so one must
+                # exist before the daemon starts. Enabling the plugin without it loads the plugin as
+                # `error` rather than `ok`: MEASURED - "failed to generate scratch file: failed to copy
+                # scratch: failed to open source .../scratch_file: no such file or directory". Guarded,
+                # because a re-run must never re-mkfs a file the running daemon is using.
+                bf=/var/lib/containerd/io.containerd.snapshotter.v1.blockfile
+                mkdir -p "$bf"
+                  # The scratch image is a DECLARED size, overridable per deployment, because it bounds how
+                  # much snapshot data a pool can hold. The filesystem is containerd's own `fs_type` below.
+                  bf_size="${CHARLY_CONTAINERD_BLOCKFILE_SCRATCH_SIZE:-512M}"
+                if [ ! -f "$bf/scratch_file" ]; then
+                  bf_fs=ext4                                   # MUST match the plugin block's fs_type below
+                  truncate -s "$bf_size" "$bf/scratch_file"
+                  mkfs."$bf_fs" -qF "$bf/scratch_file"
+                fi
             - run: write the containerd config with the snapshotter this layer was asked for
               id: containerd-config
               write: /etc/containerd/config.toml
@@ -67,13 +85,15 @@ layer-containerd:
                 [plugins."io.containerd.grpc.v1.cri".containerd]
                   snapshotter = "native"
                   disable_snapshot_annotations = false
+                
+                [plugins."io.containerd.snapshotter.v1.blockfile"]
+                  root_path = "/var/lib/containerd/io.containerd.snapshotter.v1.blockfile"
+                  scratch_file = "/var/lib/containerd/io.containerd.snapshotter.v1.blockfile/scratch_file"
+                  fs_type = "ext4"
+                  mount_options = []
 
                 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
                   runtime_type = "io.containerd.runc.v2"
-            - check: the config the daemon will read names the device-less snapshotter
-              id: containerd-config-written
-              run_as: root
-              command: grep -q 'snapshotter = "native"' /etc/containerd/config.toml
             - check: the daemon the config belongs to is installed
               id: containerd-installed
               command: command -v containerd && containerd --version
