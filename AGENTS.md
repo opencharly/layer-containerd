@@ -11,10 +11,10 @@ this file adds only what is specific to this repo.
   A pod runs its init as uid 1000, where a service `user: root` is inert (a uid-1000 supervisord cannot
   setuid), and containerd then dies on its own requirements — `mkdir /etc/cni: permission denied`, then
   `chown /run/containerd/containerd.sock.ttrpc: operation not permitted`, then `FATAL Exited too quickly`
-  under supervisor. The layer still prepares the daemon's own directories for the identity that runs it,
-  which is what a pod CAN offer; what a pod cannot offer is root. `check-containerd-vm` is the gate, and it
-  passes: the guest's own systemd runs the packaged unit as root and `ctr plugins ls` reports the declared
-  snapshotter `ok`.
+  under supervisor. The layer still prepares the daemon's own directories, owned by **root** — the identity
+  the packaged unit runs as on a host; a store owned by uid 1000 would be writable by an unprivileged user.
+  `check-containerd-vm` is the gate, and it passes: the guest's own systemd runs the packaged unit as root
+  and `ctr plugins ls` reports the declared snapshotter `ok`.
 - `charly box validate` at the repo root is the structural gate; the merge gate is the org-wide
   `charly/pr-validator` (required check `validate / validate`).
 - Landing is PR-only, and `tag-on-merge` mints the CalVer tag.

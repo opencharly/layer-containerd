@@ -1,65 +1,75 @@
-# The containerd layer: containerd installed and configured with ONE declarative choice that matters —
-# the snapshotter. A host with no devmapper device (no LVM thin pool, no spare block device) can run the
-# native/overlayfs path instead of losing the whole leg, and a host that DOES have the device can ask for
-# devmapper without hand-typing a pool.
+# The containerd layer: containerd installed and configured as the host substrate CONTAINERD.md §3.1
+# prescribes — a version-4 config, the crun/krun runtime handlers, the narrow seccomp profile, and the
+# daemon plus buildkit enabled.
 #
-# The default is deliberately `native`: it needs no device, so the layer is useful everywhere, and
-# choosing differently is one declared value rather than an edit to a generated file.
+# The snapshotter is still the layer's own concern (a host with no devmapper device must not lose the
+# whole leg): the CRI default is `overlayfs` per CONTAINERD.md §1 rule 3 / §3.3.2, while `native` and the
+# `blockfile` plugin stay served, so a device-less host and a microVM pool are both available. Making the
+# snapshotter a declared value rather than a constant is the typed `containerd:` surface the ledger asks
+# for (opencharly/spec#239).
 layer-containerd:
     candy:
         description: |
-            containerd, installed and configured for the device-less case. It writes a version-2
-            config.toml whose CRI default is the `native` snapshotter, and it ENABLES the `blockfile`
-            snapshotter plugin so a microVM pool can be backed by a root drive without an LVM thin pool.
-            The preparation step creates and formats the scratch image that the blockfile plugin clones,
-            because that plugin loads as `error` without one (MEASURED: "failed to copy scratch: failed
-            to open source .../scratch_file: no such file or directory"). A separate step also loads and
-            persists `xt_multiport`, the iptables match the CNI `portmap` plugin needs: a rootless lease
-            whose kernel module set lacks it cannot publish a port (MEASURED: "Extension multiport
-            revision 0 not supported, missing kernel module?" and `iptables ... RULE_APPEND failed`). The
-            daemon-reported assertion lives in this repo's own bed `check-containerd-vm`, which is where
-            the substrate is asserted; this candy writes the config and prepares the directories it
-            needs. A fully declared snapshotter and scratch size belong to the typed `containerd:`
-            surface the ledger asks for.
+            containerd, installed and configured for a host. It writes a version-4 config.toml whose CRI
+            default snapshotter is `overlayfs` (CONTAINERD.md §1 rule 3; `native` and `blockfile` stay
+            served), whose gRPC listener lives under `plugins."io.containerd.server.v1.grpc"` (a top-level
+            [grpc] is IGNORED by a v4 config and the daemon then binds the default socket — MEASURED), whose
+            CRI runtime map carries a `crun` default handler and a `krun` handler with
+            `pod_annotations = ["krun.*"]` (both with `SystemdCgroup = true`), and it enables
+            `containerd.service` plus, on the Arch family, `buildkit.service` (`nerdctl build` fails
+            `no buildkit host is available` until it runs). The narrow seccomp profile
+            `/etc/containerd/seccomp/crabbox-userns.json` is GENERATED from the INSTALLED containerd's own
+            `DefaultProfile()` plus `{"names":["unshare","clone"],"action":"SCMP_ACT_ALLOW"}`, with `clone3`
+            left `ENOSYS` and `keyctl`/`mount` still `EPERM` (CONTAINERD.md §3.1.1) — never a copied blob.
+            `kernel.unprivileged_userns_clone=1` is persisted and applied where that sysctl exists. The
+            preparation step creates and formats the scratch image the blockfile plugin clones, because the
+            plugin loads as `error` without one (MEASURED: "failed to copy scratch: failed to open source
+            .../scratch_file"). A separate step loads and persists `xt_multiport`, the iptables match the CNI
+            `portmap` plugin needs (MEASURED: "Extension multiport revision 0 not supported, missing kernel
+            module?"). The daemon-reported assertion lives in this repo's own bed `check-containerd-vm`,
+            which is where the substrate is asserted; this candy writes the config and prepares the
+            directories it needs.
         distro:
             fedora:
-                # iptables-nft supplies the /usr/bin/iptables the CNI portmap plugin execs;
-                # kmod supplies modprobe, which loads the match module below.
-                package: [containerd, e2fsprogs, iptables-nft, kmod]
+                # iptables-nft supplies the /usr/bin/iptables the CNI portmap plugin execs; kmod supplies
+                # modprobe; cri-tools supplies crictl (the bed's acceptance probe); golang is the
+                # seccomp generator's toolchain. buildkit is Arch-only here (CONTAINERD.md §2 names it on
+                # Arch/CachyOS), so no Fedora buildkit unit is enabled.
+                package: [containerd, crun, crun-krun, cri-tools, e2fsprogs, iptables-nft, kmod, iproute, python3, golang]
             arch:
-                package: [containerd, e2fsprogs, iptables, kmod]
+                package: [containerd, crun, krun, crictl, buildkit, e2fsprogs, iptables, kmod, iproute2, python, go]
         service:
-            # THE SERVICE, which is WI-8's own requirement and the half this layer was missing: containerd
-            # is a daemon, so a bed that starts it with a shell & cannot survive its own step. The same
-            # name appears twice because the two init systems need different forms, and the deploy picks
-            # the one that matches: supervisord in a pod runs the command, systemd runs the packaged unit.
-            # Measured the hard way: without this, ctr finds no socket and the layer own bed fails.
+            # THE SERVICE, which is WI-8's own requirement: containerd is a daemon, so a bed that starts it
+            # with a shell & cannot survive its own step. The same name appears twice because the two init
+            # systems need different forms, and the deploy picks the one that matches: supervisord in a
+            # container runs the command, systemd runs the packaged unit.
             - name: containerd
               exec: containerd --config /etc/containerd/config.toml
             - name: containerd
               use_packaged: containerd.service
               # MEASURED on a real VM (layer-fireactions#1's bed): the packaged unit loads but reads
               # "Loaded: loaded (...; disabled; preset: disabled)" - the distro ships containerd
-              # DISABLED, and `enable:` defaults to false. Without this the substrate's own
-              # precondition step ("containerd is present with the device-less snapshotter") cannot
-              # pass, even though the config it checks IS correct: the snapshotter grep above it
-              # succeeds and only `systemctl is-active` fails. The field is `enable`, not `enabled` -
+              # DISABLED, and `enable:` defaults to false. The field is `enable`, not `enabled` -
               # spec/schema/boxmetadata.cue:55, and CUE's closed schema rejects the wrong spelling.
               enable: true
+            - name: buildkit
+              use_packaged: buildkit.service
+              # CONTAINERD.md §2: the Arch package ships the unit disabled; until it runs,
+              # `nerdctl build` fails `no buildkit host is available, tried 2 candidates`.
+              enable: true
+              distro: [arch, cachyos]
         plan:
-            # The daemon needs /var/lib/containerd and /run/containerd. The package creates them owned by
-            # root, and a POD runs its init as uid 1000 - where a service user=root setting is inert,
-            # because a uid-1000 supervisord cannot setuid. Measured twice: the daemon died on its own
-            # first mkdir (mkdir /var/lib/containerd: permission denied) and the socket never appeared. So
-            # the layer makes the daemon directories writable by the identity that will run it, which is
-            # what lets it start in a pod AND in a VM.
+            # The daemon needs /var/lib/containerd and /run/containerd. The host daemon runs as root
+            # (the packaged unit), so the directories are root-owned — a store writable by uid 1000 would
+            # let an unprivileged user write the container store. A POD cannot run containerd as its init
+            # at all (uid 1000 cannot setuid), which is why the bed is a VM.
             - run: prepare the daemon state and root directories for the identity that will run it
               id: containerd-dirs
               run_as: root
               command: |
                 set -eu
                 mkdir -p /var/lib/containerd /run/containerd
-                chown -R 1000:1000 /var/lib/containerd /run/containerd
+                chown root:root /var/lib/containerd /run/containerd
                 # The blockfile snapshotter CLONES a pre-existing, FORMATTED scratch image, so one must
                 # exist before the daemon starts. Enabling the plugin without it loads the plugin as
                 # `error` rather than `ok`: MEASURED - "failed to generate scratch file: failed to copy
@@ -67,39 +77,165 @@ layer-containerd:
                 # because a re-run must never re-mkfs a file the running daemon is using.
                 bf=/var/lib/containerd/io.containerd.snapshotter.v1.blockfile
                 mkdir -p "$bf"
-                  # The scratch image is a DECLARED size, overridable per deployment, because it bounds how
-                  # much snapshot data a pool can hold. The filesystem is containerd's own `fs_type` below.
-                  bf_size="${CHARLY_CONTAINERD_BLOCKFILE_SCRATCH_SIZE:-512M}"
+                # The scratch image is a DECLARED size, overridable per deployment, because it bounds how
+                # much snapshot data a pool can hold. The filesystem is the plugin's own `fs_type` below.
+                bf_size="${CHARLY_CONTAINERD_BLOCKFILE_SCRATCH_SIZE:-512M}"
                 if [ ! -f "$bf/scratch_file" ]; then
                   bf_fs=ext4                                   # MUST match the plugin block's fs_type below
                   truncate -s "$bf_size" "$bf/scratch_file"
                   mkfs."$bf_fs" -qF "$bf/scratch_file"
                 fi
-            - run: write the containerd config with the snapshotter this layer was asked for
+            - run: write the version-4 containerd config the host contract prescribes
               id: containerd-config
               write: /etc/containerd/config.toml
               mode: "0644"
               run_as: root
               content: |
-                # Written by the charly containerd layer. The snapshotter is the one declared to the
-                # build; `native` needs no block device, `devmapper` needs an LVM thin pool that this
-                # layer does not create for you.
-                version = 2
+                # Written by the charly containerd layer. Shape: CONTAINERD.md §3.1.
+                version = 4
+                imports = ["/etc/containerd/conf.d/*.toml"]
                 root = "/var/lib/containerd"
                 state = "/run/containerd"
 
-                [plugins."io.containerd.grpc.v1.cri".containerd]
-                  snapshotter = "native"
-                  disable_snapshot_annotations = false
-                
+                # THE LISTENER. This block is the only place a v4 daemon reads its gRPC address:
+                # MEASURED on containerd v2.4.2, a v4 file with a top-level [grpc]
+                # address = "/tmp/bad.sock" dumps with this plugin's address still
+                # /run/containerd/containerd.sock - so the daemon binds the default socket and can
+                # replace a host's system socket. Never move this to a top-level [grpc].
+                [plugins."io.containerd.server.v1.grpc"]
+                  address = "/run/containerd/containerd.sock"
+
+                # The CRI snapshotter. CONTAINERD.md §1 rule 3 / §3.3.2: overlayfs everywhere; the
+                # btrfs snapshotter is the optional alternative. `native` and `blockfile` stay served
+                # (see the bed) because the device-less and Firecracker paths use them.
+                [plugins."io.containerd.cri.v1.images"]
+                  snapshotter = "overlayfs"
+
+                # The CRI default handler, which k3s reads. nerdctl does NOT read it - it passes
+                # --runtime per container and otherwise falls back to the task plugin's runc
+                # (CONTAINERD.md §3.2).
+                [plugins."io.containerd.cri.v1.runtime".containerd]
+                  default_runtime_name = "crun"
+
+                [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.crun]
+                  runtime_type = "io.containerd.runc.v2"
+                [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.crun.options]
+                  BinaryName = "/usr/bin/crun"
+                  SystemdCgroup = true
+
+                # `krun` is crun in libkrun mode, behind the same shim. `pod_annotations` is what
+                # forwards krun.ram_mib / krun.cpus from the pod to the VM (CONTAINERD.md §3.1).
+                [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.krun]
+                  runtime_type = "io.containerd.runc.v2"
+                  pod_annotations = ["krun.*"]
+                [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.krun.options]
+                  BinaryName = "/usr/bin/krun"
+                  SystemdCgroup = true
+
                 [plugins."io.containerd.snapshotter.v1.blockfile"]
                   root_path = "/var/lib/containerd/io.containerd.snapshotter.v1.blockfile"
                   scratch_file = "/var/lib/containerd/io.containerd.snapshotter.v1.blockfile/scratch_file"
                   fs_type = "ext4"
                   mount_options = []
+            # The seccomp generator, written verbatim. Its whole point is that the profile is computed by
+            # the INSTALLED containerd's own DefaultProfile() (CONTAINERD.md §3.1.1), so it must be a Go
+            # program built against the version that host runs - never a JSON blob copied from another
+            # release.
+            - run: write the seccomp-profile generator (the installed containerd's DefaultProfile plus the two rules)
+              id: containerd-seccomp-generator
+              write: /usr/local/libexec/charly/gen-seccomp.go
+              mode: "0644"
+              run_as: root
+              content: |
+                // Generates /etc/containerd/seccomp/crabbox-userns.json from the containerd this host
+                // runs. CONTAINERD.md §3.1.1: the installed DefaultProfile() plus an UNCONDITIONAL
+                // allow for unshare and clone; clone3 keeps the default profile's ENOSYS entry (what
+                // makes glibc fall back to clone), and keyctl/mount stay under defaultAction ERRNO.
+                package main
 
-                [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
-                  runtime_type = "io.containerd.runc.v2"
+                import (
+                	"encoding/json"
+                	"os"
+
+                	"github.com/containerd/containerd/v2/contrib/seccomp"
+                	specs "github.com/opencontainers/runtime-spec/specs-go"
+                )
+
+                func main() {
+                	// The default OCI capability set, which is what a lease runs with when no
+                	// --cap-add/--cap-drop is given. DefaultProfile walks this set, so it must be the
+                	// capability set the lease actually uses.
+                	sp := &specs.Spec{Process: &specs.Process{Capabilities: &specs.LinuxCapabilities{
+                		Bounding: []string{
+                			"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FSETID", "CAP_FOWNER", "CAP_MKNOD",
+                			"CAP_NET_RAW", "CAP_SETGID", "CAP_SETUID", "CAP_SETFCAP", "CAP_SETPCAP",
+                			"CAP_NET_BIND_SERVICE", "CAP_SYS_CHROOT", "CAP_KILL", "CAP_AUDIT_WRITE",
+                		},
+                	}}}
+
+                	p := seccomp.DefaultProfile(sp)
+                	// NO args filter: a rule that allows these two syscalls only for CLONE_NEWUSER is
+                	// not enough - Chromium makes namespace calls that do not match that single flag.
+                	p.Syscalls = append(p.Syscalls, specs.LinuxSyscall{
+                		Names:  []string{"unshare", "clone"},
+                		Action: specs.ActAllow,
+                	})
+
+                	enc := json.NewEncoder(os.Stdout)
+                	enc.SetIndent("", "  ")
+                	if err := enc.Encode(p); err != nil {
+                		panic(err)
+                	}
+                }
+            - run: generate the narrow seccomp profile from the installed containerd
+              id: containerd-seccomp
+              run_as: root
+              command: |
+                set -eu
+                # A stable module directory, so a re-run on a live host reuses the module cache instead
+                # of downloading it again.
+                moddir=/var/cache/charly/containerd-seccomp
+                install -d -m 0755 "$moddir"
+                # Explicit cache/home locations: the deploy executor's environment does not
+                # have to carry HOME, and a stable cache makes a re-run reuse the download.
+                export GOCACHE=/var/cache/charly/go-build GOMODCACHE=/var/cache/charly/go-mod GOPATH=/var/cache/charly/go
+                cp /usr/local/libexec/charly/gen-seccomp.go "$moddir/main.go"
+                version="$(containerd --version | awk '{print $3}')"
+                case "$version" in
+                  v*) ;;
+                  *) echo "cannot read the installed containerd module version (got '$version')" >&2; exit 1 ;;
+                esac
+                cd "$moddir"
+                if [ ! -f go.mod ]; then
+                  go mod init charly-seccomp >/dev/null
+                fi
+                # The REQUIRE must name the version this host runs: DefaultProfile is
+                # capability- and release-dependent, so a profile generated against another release is
+                # not this host's profile.
+                go get "github.com/containerd/containerd/v2@$version" >/dev/null
+                go mod tidy >/dev/null
+                out="$(mktemp)"
+                go run . > "$out"
+                install -d -m 0755 /etc/containerd/seccomp
+                install -m 0644 "$out" /etc/containerd/seccomp/crabbox-userns.json
+                rm -f "$out"
+                echo "generated /etc/containerd/seccomp/crabbox-userns.json for containerd $version"
+            - run: set kernel.unprivileged_userns_clone=1 where that sysctl exists
+              id: containerd-userns-clone
+              run_as: root
+              command: |
+                set -eu
+                # CONTAINERD.md §3.1.1: on a host where the sysctl exists it must be 1, or no
+                # container can create a user namespace and the profile has nothing to permit.
+                # PERSIST the declaration always; APPLY it only on a live venue - a built image has no
+                # systemd, and /proc/sys belongs to whatever kernel is running the build.
+                f=/proc/sys/kernel/unprivileged_userns_clone
+                if [ -e "$f" ]; then
+                  printf 'kernel.unprivileged_userns_clone=1\n' > /etc/sysctl.d/90-charly-userns.conf
+                  if [ -d /run/systemd/system ]; then
+                    sysctl -w kernel.unprivileged_userns_clone=1 >/dev/null
+                  fi
+                fi
             - run: load and persist the xt_multiport match the CNI portmap plugin needs
               id: containerd-xt-multiport
               run_as: root
