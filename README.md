@@ -13,13 +13,14 @@ WI-8 — is filed as opencharly/spec#239 (the constant here is the device-less d
 
 ## What proves it
 
-`check-containerd-pod` — a disposable pod running this layer's own image, asserting that containerd starts
-with the rendered config and that `ctr plugins ls` reports the declared snapshotter `ok`. A pod has no
-spare block device, which is exactly the device-less case: the ledger requires it to be **visible** rather
-than silently missing.
+`check-containerd-vm` — a disposable Arch guest with the layer applied by a nested `local` deploy. The
+guest's own systemd runs the packaged unit as root, `ctr plugins ls` reports the declared snapshotter
+`ok`, and the bed also proves the CNI `portmap` plugin can append a multiport rule inside a
+rootless network namespace (the capability that is missing when the kernel module set has no
+`xt_multiport`). A pod cannot run containerd as its init — uid 1000 cannot setuid — which is why this
+bed is a VM.
 
 ## Layout
 
-- `candy/layer-containerd/charly.yml` — the layer: the package, the rendered config, and the checks.
-- `box/check-containerd-pod/charly.yml` — the bed's image: a Fedora base composing the layer under test.
-- `charly.yml` — the project manifest and the `check-containerd-pod` witness.
+- `candy/layer-containerd/charly.yml` — the layer: the packages, the rendered config, the module step, and the checks.
+- `charly.yml` — the project manifest, the `containerd-vm-base` template, and the `check-containerd-vm` witness.

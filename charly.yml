@@ -41,6 +41,14 @@ containerd-vm-base:
             timezone: UTC
             package:
                 - sudo
+            # The layer's package install runs a full `pacman -Syu`, which replaces the
+            # RUNNING kernel's module tree and leaves xt_multiport (and nf_tables'
+            # compat path) unloadable until a reboot - the issue's measured host state.
+            # This bed tests the layer, not a kernel upgrade, so the fixture holds the
+            # kernel; the layer itself refuses to continue with a reboot message on a
+            # post-upgrade host (containerd-xt-multiport), which is the product behavior.
+            bootcmd:
+                - "sed -i 's|^#IgnorePkg.*|IgnorePkg = linux linux-headers|' /etc/pacman.conf"
 
 check-containerd-vm:
     vm:
@@ -113,3 +121,31 @@ check-containerd-vm:
                   exit 1
                 fi
                 echo "blockfile snapshotter: ok"
+            - check: xt_multiport is declared at boot and the CNI portmap rule loads in a rootless netns
+              id: containerd-portmap-usable
+              # A live-venue capability (a kernel module), not an image-build property: a
+              # container shares the host kernel, so this assertion belongs to the running
+              # host or guest and `charly check box` must skip it.
+              context: [runtime]
+              command: |
+                set -eu
+                conf=/etc/modules-load.d/charly-containerd.conf
+                # The DECLARATION is the part this layer adds, and the only part that
+                # distinguishes the fixed venue from the pre-fix one: a healthy kernel
+                # auto-loads xt_multiport on first use, so the rule probe alone passes on
+                # both. MEASURED on a fresh Arch guest: the module is absent from
+                # /proc/modules, and the first multiport append loads it on demand.
+                if ! grep -qx xt_multiport "$conf" 2>/dev/null; then
+                  echo "$conf does not declare xt_multiport" >&2
+                  echo "a boot would not pre-load the match the CNI portmap plugin needs" >&2
+                  exit 1
+                fi
+                echo "$conf declares xt_multiport"
+                # And the capability itself: reproduce the CNI portmap call exactly -
+                # iptables -m multiport inside a rootless (user + network) namespace.
+                # This fails on a venue whose running kernel has no loadable match.
+                unshare -Urn sh -ec '
+                  iptables -w -t nat -N CHARLY-PORTMAP-PROBE
+                  iptables -w -t nat -A CHARLY-PORTMAP-PROBE -m multiport -p tcp --destination-ports 36133 -j ACCEPT
+                  iptables -w -t nat -S CHARLY-PORTMAP-PROBE
+                '
