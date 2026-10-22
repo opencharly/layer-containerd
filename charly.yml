@@ -5,17 +5,23 @@ discover:
     - path: candy
       recursive: true
 
-# The witness: a disposable POD running the layer's own image. containerd is a daemon, so what must be
-# asserted is that it STARTS with the rendered config and that the declared snapshotter reports `ok` in
-# `ctr plugins ls` — the check the ledger asks for. A pod has no spare block device, which is exactly the
-# DEVICE-LESS case: the native snapshotter must be `ok` there, and the devmapper path must skip VISIBLY
-# rather than fail obscurely.
+# The witness: a disposable VM running the layer's own image. containerd is a daemon, so what must be
+# asserted is that it STARTS with the rendered version-4 config, serves the crun and krun handlers, and
+# reports the declared snapshotter `ok` — the check the ledger asks for. The three-step shape is in the
+# plan below: the ABSENCE control (the distro's STOCK config serves no krun), the PERFORM (the member
+# deploy runs the layer's own run steps), and the PRESENCE (crictl info lists crun and krun and the
+# declared snapshotter is ok). Every artifact and live assertion lives in THIS plan, and nowhere else:
+# the candy's plan is the install timeline plus its one mandatory ADE `check:` (the binary is installed),
+# because on a VM bed the member phase resolves no plan (MEASURED: "no plan steps resolved ... this phase
+# asserted nothing", recorded on the 2026.295.1220 run) and the bed builds no image, so there is no
+# `check box` phase to carry a candy-plan build check (`bedBuildsImage` is false for a VM bed).
 containerd-service:
     local:
         description: >-
             The containerd layer applied inside a guest: the daemon installed from the distro, the
-            version-2 config rendered on the device-less snapshotter, and the packaged unit enabled so the
-            guest's own systemd runs it as root.
+            version-4 config rendered on the declared overlayfs snapshotter with the crun and krun
+            handlers and the listener under the server plugin, the generated narrow seccomp profile, and
+            the packaged units enabled so the guest's own systemd runs them as root.
         candy:
             - layer-containerd
 
@@ -57,20 +63,103 @@ check-containerd-vm:
         lifecycle: dev
         description: >-
             The containerd layer on a disposable guest: the candy installs the daemon and renders the
-            config, the guest's own systemd runs the packaged unit AS ROOT (which is what a pod cannot do),
-            and the plan asserts on the RUNNING guest that the declared snapshotter reports ok in
-            `ctr plugins ls` — the check the ledger names. A pod has no root to offer, so this is the
-            substrate containerd actually belongs to.
+            version-4 config, the guest's own systemd runs the packaged units AS ROOT (which is what a
+            pod cannot do), and the plan asserts the three-step shape — the STOCK config serves no krun,
+            then the layer's run steps perform, then the running daemon's `crictl info` lists crun and
+            krun and the declared snapshotter reports ok. The narrow seccomp profile and the portmap
+            capability are asserted beside it. A pod has no root to offer, so this is the substrate
+            containerd actually belongs to.
         check-containerd-vm-member:
             local:
                 from: containerd-service
         plan:
-            # MEASURED: this bed previously had NO plan at all - its own description promised one
-            # ("the plan asserts on the RUNNING guest that the declared snapshotter reports ok in
-            # `ctr plugins ls`") and the check-phase log said "No plan steps defined for this image".
-            # A bed that deploys, checks nothing and cleans up reports PASS (steps=15) and proves
-            # NOTHING - the vacuous-gate failure this leg has hit three times now. These are the
-            # assertions the description already claimed.
+            # ===== STEP 1: ABSENCE — the control the presence step needs to mean anything =====
+            # `check live` runs AFTER `deploy add` applied the layer, so the pre-change state is not
+            # observable on the venue. Reproduce it from the distro's OWN stock config: a private daemon
+            # (private root, state and socket) started from `containerd config default`. If the STOCK
+            # config already served krun, the presence assertion below would pass with or without this
+            # layer — this step is what makes it fail in that case (R7).
+            - check: the STOCK containerd serves no krun handler, so the handler the layer adds cannot pass by coincidence
+              id: containerd-krun-absent-before-config
+              context: [runtime]
+              command: |
+                set -eu
+                # DAEMON SAFETY, not decoration: a test daemon must never touch the venue's system
+                # socket (a v4 config with a top-level [grpc] is ignored and the daemon then binds the
+                # DEFAULT socket - MEASURED, and it replaced a host system socket earlier today). Four
+                # independent guards: the config's own gRPC AND ttrpc server blocks are rewritten to
+                # private paths, --address is passed as well, and the real listen addresses plus BOTH
+                # system sockets' inode/mtime are READ rather than trusted.
+                sys=/run/containerd/containerd.sock
+                # BOTH system listeners the daemon owns: the gRPC socket and its ttrpc sibling.
+                sys_before="$(stat -c '%i %Y' "$sys" 2>/dev/null || echo absent) $(stat -c '%i %Y' "$sys.ttrpc" 2>/dev/null || echo absent)"
+                work="$(mktemp -d /tmp/charly-stock-containerd.XXXXXX)"
+                as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi; }
+                cleanup() {
+                  if [ -f "$work/daemon.pid" ]; then as_root kill "$(cat "$work/daemon.pid")" 2>/dev/null || true; fi
+                  as_root rm -rf "$work"
+                }
+                trap cleanup EXIT
+                as_root containerd config default > "$work/stock-raw.toml"
+                python3 -I - "$work/stock-raw.toml" "$work/stock.toml" "$work/containerd.sock" <<'PY'
+                import sys
+                src, dst, sock = sys.argv[1], sys.argv[2], sys.argv[3]
+                out, block = [], ""
+                for line in open(src):
+                    s = line.strip()
+                    if s.startswith("["):
+                        block = s
+                    if s.startswith("imports ="):
+                        # Drop imports: a host drop-in must not be able to inject a handler into the control.
+                        line = "imports = []\n"
+                    elif block.startswith("[plugins.'io.containerd.server.v1.grpc']") or block.startswith('[plugins."io.containerd.server.v1.grpc"]'):
+                        if s.startswith("address ="):
+                            line = "    address = '%s'\n" % sock
+                    elif block.startswith("[plugins.'io.containerd.server.v1.ttrpc']") or block.startswith('[plugins."io.containerd.server.v1.ttrpc"]'):
+                        if s.startswith("address ="):
+                            line = "    address = '%s.ttrpc'\n" % sock
+                    out.append(line)
+                open(dst, "w").writelines(out)
+                text = "".join(out)
+                assert "imports = []" in text, "imports was not stripped"
+                assert sock in text, "the private server address is not in the stock config"
+                assert "/run/containerd/containerd.sock'" not in text, "the stock config still names the system socket"
+                assert "/run/containerd/containerd.sock.ttrpc'" not in text, "the stock config still names the system ttrpc socket"
+                PY
+                as_root mkdir -p "$work/root" "$work/state"
+                as_root sh -c 'echo $$ > '"$work"'/daemon.pid; exec containerd --config '"$work"'/stock.toml --root '"$work"'/root --state '"$work"'/state --address '"$work"'/containerd.sock' > "$work/daemon.log" 2>&1 &
+                i=0
+                while [ ! -S "$work/containerd.sock" ]; do
+                  i=$((i+1))
+                  if [ "$i" -gt 300 ]; then
+                    echo "the private stock daemon never bound $work/containerd.sock:" >&2
+                    tail -20 "$work/daemon.log" >&2
+                    exit 1
+                  fi
+                  sleep 0.1
+                done
+                # SAFETY EVIDENCE: the daemon's REAL listen addresses are the private sockets, and
+                # NEITHER of the venue's system listeners was replaced.
+                for p in "$work/containerd.sock" "$work/containerd.sock.ttrpc"; do
+                  ss -lx | grep -F "$p" >/dev/null || {
+                    echo "the private daemon is not listening on $p:" >&2; ss -lx >&2; exit 1; }
+                done
+                sys_after="$(stat -c '%i %Y' "$sys" 2>/dev/null || echo absent) $(stat -c '%i %Y' "$sys.ttrpc" 2>/dev/null || echo absent)"
+                if [ "$sys_before" != "$sys_after" ]; then
+                  echo "the venue's system sockets changed while the private daemon ran: before=$sys_before after=$sys_after" >&2
+                  exit 1
+                fi
+                echo "private daemon: $work/containerd.sock (+ .ttrpc) - system sockets inode/mtime unchanged: $sys_before"
+                as_root crictl -r "unix://$work/containerd.sock" -i "unix://$work/containerd.sock" info > "$work/info.json"
+                python3 -I - "$work/info.json" <<'PY'
+                import json, sys
+                d = json.load(open(sys.argv[1]))
+                runtimes = sorted(d["config"]["containerd"].get("runtimes", {}))
+                print("stock runtimes:", runtimes)
+                if "krun" in runtimes:
+                    sys.exit("the STOCK config already serves krun - this bed cannot prove the layer added it")
+                PY
+            # ===== STEP 2: PERFORM — the member deploy above ran the layer's own `run:` steps =====
             - check: the packaged containerd unit is RUNNING, not merely installed and enabled
               id: containerd-unit-active
               command: |
@@ -92,35 +181,200 @@ check-containerd-vm:
                 fi
                 systemctl is-enabled containerd.service
                 systemctl is-active containerd.service
-            - check: the declared snapshotter reports ok in ctr plugins ls
-              id: containerd-snapshotter-ok
+                # The second unit the host contract enables: until it runs, `nerdctl build` fails
+                # `no buildkit host is available`.
+                systemctl is-enabled buildkit.service
+                systemctl is-active buildkit.service
+            - check: kernel.unprivileged_userns_clone is 1 where the kernel exposes it
+              id: containerd-userns-clone
+              context: [runtime]
               command: |
                 set -eu
-                # MEASURED, first run: the list printed "blockfile ... skip" and charly TRUNCATED the
-                # rest, so the row that decides this - native - was cut off. Two changes follow: assert
-                # on native SPECIFICALLY (the config declares native, not "native or blockfile"), and
-                # print only the snapshotter rows so the answer fits inside charly's stderr cap and
-                # cannot be truncated away.
-                sudo -n ctr plugins ls 2>&1 | grep -E 'TYPE|snapshotter' > /tmp/ctr-snap.txt || {
-                  echo "ctr plugins ls produced no snapshotter rows:" >&2
-                  sudo -n ctr plugins ls 2>&1 | head -20 >&2
-                  exit 1; }
-                cat /tmp/ctr-snap.txt
-                if ! grep -E 'snapshotter.*[[:space:]]native[[:space:]].*[[:space:]]ok' /tmp/ctr-snap.txt >/dev/null 2>&1; then
-                  echo "the DECLARED native snapshotter is not ok - the rows above are the whole answer" >&2
+                # CONTAINERD.md §3.1.1: where the sysctl exists it must be 1, or no container can
+                # create a user namespace and the seccomp profile has nothing to permit. Where the
+                # kernel does not expose it (Arch), user namespaces are not gated by that sysctl and
+                # the step passes with a VISIBLE N/A - never a silent pass.
+                f=/proc/sys/kernel/unprivileged_userns_clone
+                if [ ! -e "$f" ]; then
+                  echo "N/A: this kernel exposes no $f (user namespaces are not gated by that sysctl)"
+                  exit 0
+                fi
+                v="$(cat "$f")"
+                if [ "$v" != 1 ]; then
+                  echo "$f = $v, want 1: no container can create a user namespace" >&2
                   exit 1
                 fi
-                echo "native snapshotter: ok"
-                # And the capability this change ADDS. The native assertion above passes with or without it,
-                # so without this the bed could not fail for the property the change introduces (R7: a test
-                # that cannot fail is invalid). MEASURED before the change: `blockfile ... skip`, and the
-                # fireactions server refused to start on a guest whose only root-drive-capable snapshotter
-                # it accepts is this one.
-                if ! grep -E 'snapshotter.*[[:space:]]blockfile[[:space:]].*[[:space:]]ok' /tmp/ctr-snap.txt >/dev/null 2>&1; then
-                  echo "blockfile is not ok - a Firecracker pool cannot back a root drive without it; the rows above are the whole answer" >&2
-                  exit 1
-                fi
-                echo "blockfile snapshotter: ok"
+                echo "$f = $v"
+            # The CONFIG CONTRACT, asserted at the emitted artifact's own boundary: the daemon's own
+            # parser reads the file (`containerd config dump`) and the EFFECTIVE values are then compared
+            # with the contract. This is the ONE home of that assertion; the candy's plan carries no
+            # config check, because a cloud-image VM bed builds no image (`bedBuildsImage` is false) and
+            # its member phase resolves no plan, so a candy-plan check would run in no phase here.
+            - check: the effective config is version 4 with the handler set, the listener under the server plugin, and the declared snapshotter
+              id: containerd-config-v4
+              command: |
+                set -eu
+                as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi; }
+                cfg=/etc/containerd/config.toml
+                dump=/tmp/charly-containerd-dump.toml
+                # The GLOBAL --config form, not the dump subcommand's flag: it is the documented
+                # CLI shape, and a future CLI change then fails HERE (loudly) rather than passing.
+                as_root containerd --config "$cfg" config dump > "$dump"
+                python3 -I - "$cfg" "$dump" <<'PY'
+                import sys, tomllib
+
+                cfg_path, dump_path = sys.argv[1], sys.argv[2]
+                with open(cfg_path, "rb") as f:
+                    raw = tomllib.load(f)
+                with open(dump_path, "rb") as f:
+                    eff = tomllib.load(f)
+
+                def fail(msg):
+                    print(msg, file=sys.stderr)
+                    sys.exit(1)
+
+                # A top-level [grpc] is silently IGNORED by a v4 config; the daemon then binds its
+                # default socket and can replace a host system socket.
+                if "grpc" in raw:
+                    fail("a top-level [grpc] table is ignored by a v4 config - move the address under plugins.'io.containerd.server.v1.grpc'")
+                if eff.get("version") != 4:
+                    fail("effective config version is %r, want 4" % (eff.get("version"),))
+                imports = eff.get("imports") or []
+                if "/etc/containerd/conf.d/*.toml" not in imports:
+                    fail("imports = %r does not carry /etc/containerd/conf.d/*.toml" % (imports,))
+
+                plugins = eff.get("plugins", {})
+                grpc = plugins.get("io.containerd.server.v1.grpc", {})
+                if grpc.get("address") != "/run/containerd/containerd.sock":
+                    fail("the server plugin's address is %r - its real listen address must be the system socket" % (grpc.get("address"),))
+
+                images = plugins.get("io.containerd.cri.v1.images", {})
+                if images.get("snapshotter") != "overlayfs":
+                    fail("the CRI-declared snapshotter is %r, want overlayfs (CONTAINERD.md 3.3.2)" % (images.get("snapshotter"),))
+
+                runtime = plugins.get("io.containerd.cri.v1.runtime", {}).get("containerd", {})
+                if runtime.get("default_runtime_name") != "crun":
+                    fail("default_runtime_name is %r, want crun" % (runtime.get("default_runtime_name"),))
+                runtimes = runtime.get("runtimes", {})
+                for name, binary in (("crun", "/usr/bin/crun"), ("krun", "/usr/bin/krun")):
+                    h = runtimes.get(name)
+                    if not h:
+                        fail("runtime handler %r is absent" % (name,))
+                    if h.get("runtime_type") != "io.containerd.runc.v2":
+                        fail("%s runtime_type is %r" % (name, h.get("runtime_type")))
+                    opts = h.get("options", {})
+                    if opts.get("BinaryName") != binary:
+                        fail("%s BinaryName is %r, want %s" % (name, opts.get("BinaryName"), binary))
+                    if opts.get("SystemdCgroup") is not True:
+                        fail("%s SystemdCgroup is %r, want true" % (name, opts.get("SystemdCgroup")))
+                if runtimes["krun"].get("pod_annotations") != ["krun.*"]:
+                    fail("krun pod_annotations is %r, want [\"krun.*\"]" % (runtimes["krun"].get("pod_annotations"),))
+                print("version=4 imports=%s grpc=%s snapshotter=%s runtimes=%s" % (
+                    imports, grpc.get("address"), images.get("snapshotter"), sorted(runtimes)))
+                PY
+            - check: the seccomp profile is the narrow one - unconditional unshare/clone, clone3 ENOSYS, keyctl and mount denied
+              id: containerd-seccomp-profile
+              command: |
+                set -eu
+                python3 -I - /etc/containerd/seccomp/crabbox-userns.json <<'PY'
+                import json, sys
+
+                p = json.load(open(sys.argv[1]))
+
+                def fail(msg):
+                    print(msg, file=sys.stderr)
+                    sys.exit(1)
+
+                if p.get("defaultAction") != "SCMP_ACT_ERRNO":
+                    fail("defaultAction is %r - the default profile's ERRNO action is what keeps keyctl/mount denied" % (p.get("defaultAction"),))
+
+                # The appended rule: BOTH syscalls, UNCONDITIONALLY (no args filter).
+                narrow = [r for r in p.get("syscalls", [])
+                          if set(r.get("names", [])) == {"unshare", "clone"}
+                          and r.get("action") == "SCMP_ACT_ALLOW" and "args" not in r]
+                if not narrow:
+                    fail("no unconditional {unshare,clone} SCMP_ACT_ALLOW rule - a CLONE_NEWUSER-only rule is not enough")
+
+                # clone3 must stay ENOSYS (errno 38), so glibc falls back to clone - and no ALLOW
+                # rule may name it: an appended allow can win over the default ERRNO entry, which is
+                # exactly what the contract forbids.
+                clone3 = [r for r in p.get("syscalls", []) if "clone3" in r.get("names", [])]
+                if any(r.get("action") == "SCMP_ACT_ALLOW" for r in clone3):
+                    fail("an ALLOW rule names clone3 - it must stay ENOSYS: %r" % (clone3,))
+                if not any(r.get("action") == "SCMP_ACT_ERRNO" and r.get("errnoRet") == 38 for r in clone3):
+                    fail("clone3 is not left ENOSYS (SCMP_ACT_ERRNO, errnoRet 38): %r" % (clone3,))
+
+                # The narrowness control: no allow rule may name keyctl or mount.
+                for r in p.get("syscalls", []):
+                    if r.get("action") == "SCMP_ACT_ALLOW" and ({"keyctl", "mount"} & set(r.get("names", []))):
+                        fail("an ALLOW rule names keyctl/mount - the profile is no longer narrow: %r" % (r,))
+
+                print("narrow profile: %d syscall rules, defaultAction=ERRNO, clone3=ENOSYS" % len(p.get("syscalls", [])))
+                PY
+            - check: the store root, the state root, and the blockfile directory the layer creates are owned by root
+              id: containerd-store-root-owned
+              context: [runtime]
+              command: |
+                set -eu
+                # The packaged unit runs the daemon as root. This asserts exactly the paths the layer's
+                # preparation step OWNS and REPAIRS - the two roots and the blockfile directory - and NOT
+                # the inside of the store: a container rootfs file must keep the ownership its container
+                # gave it, which is why the step must never chown -R. An earlier version of this layer
+                # chowned the whole tree to uid 1000, so that shape makes THIS step fail on a fresh guest.
+                # READ AS ROOT: /var/lib/containerd is mode 0700 root:root, so the deploy user cannot
+                # even traverse to the blockfile directory (MEASURED here: stat: Permission denied).
+                as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi; }
+                bf=/var/lib/containerd/io.containerd.snapshotter.v1.blockfile
+                for p in /var/lib/containerd /run/containerd "$bf" "$bf/scratch_file"; do
+                  owner="$(as_root stat -c '%u:%g' "$p")"
+                  echo "$p -> $owner"
+                  if [ "$owner" != 0:0 ]; then
+                    echo "$p is owned by $owner, want 0:0" >&2
+                    exit 1
+                  fi
+                done
+            # ===== STEP 3: PRESENCE — in terms ONLY the layer's config could produce =====
+            - check: the running daemon serves crun and krun, and the declared snapshotter reports ok
+              id: containerd-runtimes-and-snapshotter
+              context: [runtime]
+              command: |
+                set -eu
+                as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi; }
+                as_root crictl -r unix:///run/containerd/containerd.sock -i unix:///run/containerd/containerd.sock info > /tmp/charly-crictl-info.json
+                as_root containerd config dump > /tmp/charly-containerd-dump.toml
+                as_root ctr plugins ls > /tmp/charly-ctr-plugins.txt
+                python3 -I - <<'PY'
+                import json, sys, tomllib
+
+                info = json.load(open("/tmp/charly-crictl-info.json"))
+                c = info["config"]["containerd"]
+                runtimes = sorted(c.get("runtimes", {}))
+                print("default runtime:", c.get("defaultRuntimeName"))
+                print("runtimes:", runtimes)
+                if c.get("defaultRuntimeName") != "crun":
+                    sys.exit("the CRI default handler is %r, want crun" % (c.get("defaultRuntimeName"),))
+                for want in ("crun", "krun"):
+                    if want not in runtimes:
+                        sys.exit("the running daemon does not serve the %r handler: the config's runtime map is %r" % (want, runtimes))
+
+                eff = tomllib.load(open("/tmp/charly-containerd-dump.toml", "rb"))
+                declared = eff.get("plugins", {}).get("io.containerd.cri.v1.images", {}).get("snapshotter")
+                print("declared snapshotter:", declared)
+                if not declared:
+                    sys.exit("the effective config declares no CRI snapshotter")
+
+                rows = {}
+                for line in open("/tmp/charly-ctr-plugins.txt"):
+                    f = line.split()
+                    if len(f) >= 4 and f[0].startswith("io.containerd.snapshotter.v1"):
+                        rows[f[1]] = f[-1]
+                print("snapshotter plugins:", {k: rows[k] for k in sorted(rows)})
+                # The declared one is the contract; native and blockfile are this layer's
+                # device-less and Firecracker paths (opencharly/layer-containerd#1, #3).
+                for name in (declared, "native", "blockfile"):
+                    if rows.get(name) != "ok":
+                        sys.exit("the %r snapshotter reports %r in ctr plugins ls, want ok - the rows above are the whole answer" % (name, rows.get(name)))
+                PY
             - check: xt_multiport is declared at boot and the CNI portmap rule loads in a rootless netns
               id: containerd-portmap-usable
               # A live-venue capability (a kernel module), not an image-build property: a
