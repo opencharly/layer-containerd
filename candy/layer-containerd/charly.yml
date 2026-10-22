@@ -60,16 +60,15 @@ layer-containerd:
               distro: [arch, cachyos]
         plan:
             # The daemon needs /var/lib/containerd and /run/containerd. The host daemon runs as root
-            # (the packaged unit), so the directories are root-owned — a store writable by uid 1000 would
-            # let an unprivileged user write the container store. A POD cannot run containerd as its init
-            # at all (uid 1000 cannot setuid), which is why the bed is a VM.
-            - run: prepare the daemon state and root directories for the identity that will run it
+            # (the packaged unit), so the two ROOTS and the blockfile directory this layer creates are
+            # root-owned. Ownership INSIDE the store is deliberately not rewritten: a container rootfs
+            # file must keep the ownership its container gave it, so a blanket chown is wrong.
+            - run: prepare and repair the daemon state and root directories for the identity that will run it
               id: containerd-dirs
               run_as: root
               command: |
                 set -eu
                 mkdir -p /var/lib/containerd /run/containerd
-                chown root:root /var/lib/containerd /run/containerd
                 # The blockfile snapshotter CLONES a pre-existing, FORMATTED scratch image, so one must
                 # exist before the daemon starts. Enabling the plugin without it loads the plugin as
                 # `error` rather than `ok`: MEASURED - "failed to generate scratch file: failed to copy
@@ -85,6 +84,13 @@ layer-containerd:
                   truncate -s "$bf_size" "$bf/scratch_file"
                   mkfs."$bf_fs" -qF "$bf/scratch_file"
                 fi
+                # REPAIR, not a blanket chown. An earlier version of this layer ran
+                # `chown -R 1000:1000 /var/lib/containerd /run/containerd`, so a venue RE-DEPLOYED over
+                # it carries uid-1000 subdirectories - including the blockfile directory and its scratch
+                # image. Fix exactly the paths this layer owns: the two roots and that directory. A
+                # `chown -R` over the store would clobber the ownership of files inside container
+                # rootfs, which must stay as their container wrote them.
+                chown root:root /var/lib/containerd /run/containerd "$bf" "$bf/scratch_file"
             - run: write the version-4 containerd config the host contract prescribes
               id: containerd-config
               write: /etc/containerd/config.toml

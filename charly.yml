@@ -10,11 +10,11 @@ discover:
 # reports the declared snapshotter `ok` — the check the ledger asks for. The three-step shape is in the
 # plan below: the ABSENCE control (the distro's STOCK config serves no krun), the PERFORM (the member
 # deploy runs the layer's own run steps), and the PRESENCE (crictl info lists crun and krun and the
-# declared snapshotter is ok). The absence and presence steps live in THIS plan rather than the candy's
-# because, on a VM bed, the member phase resolves no plan of its own (MEASURED: "no plan steps resolved
-# ... this phase asserted nothing", recorded on the 2026.295.1220 run), so the candy's `check:` steps run
-# at `check-image` but never at the VM's `check-live`. The candy's own plan still carries the two
-# artifact contracts (the config's effective values and the seccomp profile), which do run there.
+# declared snapshotter is ok). Every artifact and live assertion lives in THIS plan, and nowhere else:
+# the candy's plan is the install timeline plus its one mandatory ADE `check:` (the binary is installed),
+# because on a VM bed the member phase resolves no plan (MEASURED: "no plan steps resolved ... this phase
+# asserted nothing", recorded on the 2026.295.1220 run) and the bed builds no image, so there is no
+# `check box` phase to carry a candy-plan build check (`bedBuildsImage` is false for a VM bed).
 containerd-service:
     local:
         description: >-
@@ -207,8 +207,9 @@ check-containerd-vm:
                 echo "$f = $v"
             # The CONFIG CONTRACT, asserted at the emitted artifact's own boundary: the daemon's own
             # parser reads the file (`containerd config dump`) and the EFFECTIVE values are then compared
-            # with the contract. It lives in this plan because a cloud-image VM bed builds no image
-            # (`bedBuildsImage`), so there is no `check box` phase to carry a candy-plan build check.
+            # with the contract. This is the ONE home of that assertion; the candy's plan carries no
+            # config check, because a cloud-image VM bed builds no image (`bedBuildsImage` is false) and
+            # its member phase resolves no plan, so a candy-plan check would run in no phase here.
             - check: the effective config is version 4 with the handler set, the listener under the server plugin, and the declared snapshotter
               id: containerd-config-v4
               command: |
@@ -216,7 +217,9 @@ check-containerd-vm:
                 as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi; }
                 cfg=/etc/containerd/config.toml
                 dump=/tmp/charly-containerd-dump.toml
-                as_root containerd config dump --config "$cfg" > "$dump"
+                # The GLOBAL --config form, not the dump subcommand's flag: it is the documented
+                # CLI shape, and a future CLI change then fails HERE (loudly) rather than passing.
+                as_root containerd --config "$cfg" config dump > "$dump"
                 python3 -I - "$cfg" "$dump" <<'PY'
                 import sys, tomllib
 
@@ -308,6 +311,28 @@ check-containerd-vm:
 
                 print("narrow profile: %d syscall rules, defaultAction=ERRNO, clone3=ENOSYS" % len(p.get("syscalls", [])))
                 PY
+            - check: the store root, the state root, and the blockfile directory the layer creates are owned by root
+              id: containerd-store-root-owned
+              context: [runtime]
+              command: |
+                set -eu
+                # The packaged unit runs the daemon as root. This asserts exactly the paths the layer's
+                # preparation step OWNS and REPAIRS - the two roots and the blockfile directory - and NOT
+                # the inside of the store: a container rootfs file must keep the ownership its container
+                # gave it, which is why the step must never chown -R. An earlier version of this layer
+                # chowned the whole tree to uid 1000, so that shape makes THIS step fail on a fresh guest.
+                # READ AS ROOT: /var/lib/containerd is mode 0700 root:root, so the deploy user cannot
+                # even traverse to the blockfile directory (MEASURED here: stat: Permission denied).
+                as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi; }
+                bf=/var/lib/containerd/io.containerd.snapshotter.v1.blockfile
+                for p in /var/lib/containerd /run/containerd "$bf" "$bf/scratch_file"; do
+                  owner="$(as_root stat -c '%u:%g' "$p")"
+                  echo "$p -> $owner"
+                  if [ "$owner" != 0:0 ]; then
+                    echo "$p is owned by $owner, want 0:0" >&2
+                    exit 1
+                  fi
+                done
             # ===== STEP 3: PRESENCE — in terms ONLY the layer's config could produce =====
             - check: the running daemon serves crun and krun, and the declared snapshotter reports ok
               id: containerd-runtimes-and-snapshotter

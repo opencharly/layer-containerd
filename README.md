@@ -41,12 +41,18 @@ this bed is a VM), and the bed's plan is the three-step shape:
    effective config declares (`overlayfs`), plus `native` and `blockfile`, report `ok` in
    `ctr plugins ls`.
 
-The bed also proves the CNI `portmap` plugin can append a multiport rule inside a rootless network
-namespace, and that the user-namespace sysctl is set where the kernel exposes it.
+The bed also proves the config's effective values (read by the daemon's own parser), the narrow seccomp
+profile's three contract points, that the store/state roots and the blockfile directory the layer owns are
+`root:root`, the user-namespace sysctl where the kernel exposes it, and that the CNI `portmap` plugin can
+append a multiport rule inside a rootless network namespace.
 
 ## Layout
 
 - `candy/layer-containerd/charly.yml` — the layer: the packages, the rendered config, the seccomp
-  generator, the module and sysctl steps, and the artifact checks (the effective config and the profile).
+  generator, the module and sysctl steps, and the preparation step that repairs the ownership of the
+  store/state roots and the blockfile directory it owns.
 - `charly.yml` — the project manifest, the `containerd-vm-base` template, and the `check-containerd-vm`
-  witness.
+  witness. **Every assertion lives in the bed's plan** — the three-step shape, the config contract, the
+  seccomp-profile contract, the ownership assertion and the portmap probe. The candy's plan carries the
+  install timeline and its mandatory ADE `check:` only: a VM bed resolves no member plan at `check-live`
+  and builds no image, so a candy-plan check would run in no phase here.
