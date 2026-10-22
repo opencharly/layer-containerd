@@ -13,15 +13,21 @@ layer-containerd:
             snapshotter plugin so a microVM pool can be backed by a root drive without an LVM thin pool.
             The preparation step creates and formats the scratch image that the blockfile plugin clones,
             because that plugin loads as `error` without one (MEASURED: "failed to copy scratch: failed
-            to open source .../scratch_file: no such file or directory"). The daemon-reported assertion
-            lives in this repo's own bed `check-containerd-vm`, which is where the substrate is asserted;
-            this candy writes the config and prepares the directories it needs. A fully declared
-            snapshotter and scratch size belong to the typed `containerd:` surface the ledger asks for.
+            to open source .../scratch_file: no such file or directory"). A separate step also loads and
+            persists `xt_multiport`, the iptables match the CNI `portmap` plugin needs: a rootless lease
+            whose kernel module set lacks it cannot publish a port (MEASURED: "Extension multiport
+            revision 0 not supported, missing kernel module?" and `iptables ... RULE_APPEND failed`). The
+            daemon-reported assertion lives in this repo's own bed `check-containerd-vm`, which is where
+            the substrate is asserted; this candy writes the config and prepares the directories it
+            needs. A fully declared snapshotter and scratch size belong to the typed `containerd:`
+            surface the ledger asks for.
         distro:
             fedora:
-                package: [containerd, e2fsprogs]
+                # iptables-nft supplies the /usr/bin/iptables the CNI portmap plugin execs;
+                # kmod supplies modprobe, which loads the match module below.
+                package: [containerd, e2fsprogs, iptables-nft, kmod]
             arch:
-                package: [containerd, e2fsprogs]
+                package: [containerd, e2fsprogs, iptables, kmod]
         service:
             # THE SERVICE, which is WI-8's own requirement and the half this layer was missing: containerd
             # is a daemon, so a bed that starts it with a shell & cannot survive its own step. The same
@@ -94,6 +100,30 @@ layer-containerd:
 
                 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
                   runtime_type = "io.containerd.runc.v2"
+            - run: load and persist the xt_multiport match the CNI portmap plugin needs
+              id: containerd-xt-multiport
+              run_as: root
+              command: |
+                set -eu
+                mkdir -p /etc/modules-load.d
+                printf '%s\n' xt_multiport > /etc/modules-load.d/charly-containerd.conf
+                # A built IMAGE has no systemd (the kernel belongs to the venue that
+                # runs it), so it only persists the declaration. A live venue loads the
+                # module NOW, and MUST refuse to continue when the running kernel has no
+                # module tree: a package upgrade that replaced it leaves the module
+                # unloadable until a reboot, and a silent skip would surface later as a
+                # port publish failing in the CNI plugin with nothing naming the cause.
+                if [ -d /run/systemd/system ]; then
+                  if [ ! -d "/lib/modules/$(uname -r)" ]; then
+                    echo "the running kernel $(uname -r) has no module tree - a package upgrade replaced it; reboot this venue, then re-run" >&2
+                    exit 1
+                  fi
+                  command -v modprobe >/dev/null 2>&1 || {
+                    echo "modprobe is missing; the kmod package is required to load xt_multiport" >&2
+                    exit 1
+                  }
+                  modprobe xt_multiport
+                fi
             - check: the daemon the config belongs to is installed
               id: containerd-installed
               command: command -v containerd && containerd --version
