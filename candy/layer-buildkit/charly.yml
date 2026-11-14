@@ -1,0 +1,43 @@
+# The rootful builder: the packaged buildkit unit the host contract enables.
+#
+# WHY IT IS ITS OWN CANDY, and not a service in layer-containerd. An image composition renders its
+# services through supervisord, where a `use_packaged:` entry is dropped — and plugin-box reports that
+# drop per CANDY, so ONE packaged-only entry made the whole engine candy read as host-only to a box
+# that only wants containerd. A builder is also a different concern from the engine: a runtime host
+# runs containers, a builder builds images, and only the first is what `layer-containerd` promises.
+# The same-name-twice pattern `layer-containerd` uses for containerd (exec + packaged) is what keeps
+# its own entry dual-venue; buildkitd has no container form to pair with, because a pod's init runs as
+# the image user and buildkitd needs root (this repo's AGENTS.md records the pod-bed removal).
+layer-buildkit:
+    candy:
+        description: |
+            The rootful buildkit daemon for the host substrate CONTAINERD.md §2 prescribes: the distro's
+            `buildkit` package with its packaged unit ENABLED, so `nerdctl build` finds a buildkit host
+            instead of failing `no buildkit host is available, tried 2 candidates`. The unit is enabled
+            for the same measured reason containerd's is: the Arch package ships it disabled, and a
+            packaged unit that is merely loaded reads "Loaded: loaded (...; disabled; preset:
+            disabled)" until something enables it.
+            It is deliberately packaged-only. buildkitd runs as root from the systemd unit on a host or
+            in a VM; there is no container form to pair with the unit, and a composition that is not a
+            host drops it — which is exactly what plugin-box's packaged-service lint reports. Compose
+            this candy where a builder is wanted, and keep it off an image whose only need is the
+            engine. ADE check: the daemon binary and the packaged unit it enables are both present.
+        distro:
+            arch:
+                package: [buildkit]
+        service:
+            - name: buildkit
+              use_packaged: buildkit.service
+              # CONTAINERD.md §2: the package ships the unit disabled; until it runs, `nerdctl build`
+              # fails `no buildkit host is available, tried 2 candidates`. `enable:` is the field, not
+              # `enabled:` — spec/schema/boxmetadata.cue:55, and CUE's closed schema rejects the
+              # wrong spelling.
+              enable: true
+              distro: [arch, cachyos]
+        plan:
+            - check: the buildkit daemon and the packaged unit this candy enables are both installed
+              id: buildkit-installed
+              command: |
+                set -eu
+                command -v buildkitd
+                test -f /usr/lib/systemd/system/buildkit.service

@@ -1,4 +1,13 @@
 # Makes this layer repo a PROJECT so its candy is gated, and carries the R10 witness.
+#
+# The `vm:` substrate, which this project must compose because its witness is a VM deploy.
+# `check-containerd-vm` declares `from: containerd-vm-base`, and BringUpMembers dispatches
+# `deploy add` for that member, so without this the member deploy refuses with "the vm deploy
+# substrate is not available in this project — its deploy plugin (plugin-deploy-vm) is not in the
+# candy closure" (charly#1083). MEASURED on this repo: the bed failed at `[deploy-add]` after 1.0s
+# with exactly that message on UNMODIFIED main, so the gate had been red before this change.
+import:
+    - vmdeploy: '@github.com/opencharly/plugin-deploy-vm:v2026.296.1557'
 discover:
     - path: box
       recursive: true
@@ -24,6 +33,10 @@ containerd-service:
             the packaged units enabled so the guest's own systemd runs them as root.
         candy:
             - layer-containerd
+            # The rootful builder is its own candy: a different concern from the engine, and the one
+            # packaged-only service that kept an image composition warning about a service it never
+            # wanted (this bed asserts the unit, so the split must still compose it).
+            - layer-buildkit
 
 containerd-vm-base:
     vm:
