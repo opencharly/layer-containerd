@@ -1,6 +1,9 @@
 # The containerd layer: containerd installed and configured as the host substrate CONTAINERD.md §3.1
 # prescribes — a version-4 config, the crun/krun runtime handlers, the narrow seccomp profile, and the
-# daemon plus buildkit enabled.
+# daemon enabled. The rootful BUILDKIT unit is its own candy (candy/layer-buildkit): a builder is a
+# different concern from the engine, and keeping it here made the whole candy look host-only to a
+# composition that only wants the engine (plugin-box's packaged-service lint reads the CANDY, and a
+# single packaged-only entry marks all of it as dropped under supervisord).
 #
 # The snapshotter is still the layer's own concern (a host with no devmapper device must not lose the
 # whole leg): the CRI default is `overlayfs` per CONTAINERD.md §1 rule 3 / §3.3.2, while `native` and the
@@ -16,8 +19,7 @@ layer-containerd:
             [grpc] is IGNORED by a v4 config and the daemon then binds the default socket — MEASURED), whose
             CRI runtime map carries a `crun` default handler and a `krun` handler with
             `pod_annotations = ["krun.*"]` (both with `SystemdCgroup = true`), and it enables
-            `containerd.service` plus, on the Arch family, `buildkit.service` (`nerdctl build` fails
-            `no buildkit host is available` until it runs). The narrow seccomp profile
+            `containerd.service`. The narrow seccomp profile
             `/etc/containerd/seccomp/crabbox-userns.json` is GENERATED from the INSTALLED containerd's own
             `DefaultProfile()` plus `{"names":["unshare","clone"],"action":"SCMP_ACT_ALLOW"}`, with `clone3`
             left `ENOSYS` and `keyctl`/`mount` still `EPERM` (CONTAINERD.md §3.1.1) — never a copied blob.
@@ -33,11 +35,11 @@ layer-containerd:
             fedora:
                 # iptables-nft supplies the /usr/bin/iptables the CNI portmap plugin execs; kmod supplies
                 # modprobe; cri-tools supplies crictl (the bed's acceptance probe); golang is the
-                # seccomp generator's toolchain. buildkit is Arch-only here (CONTAINERD.md §2 names it on
-                # Arch/CachyOS), so no Fedora buildkit unit is enabled.
+                # seccomp generator's toolchain. buildkit is not here at all: the rootful builder unit
+                # is candy/layer-buildkit's, and it targets the Arch family (CONTAINERD.md §2).
                 package: [containerd, crun, crun-krun, cri-tools, e2fsprogs, iptables-nft, kmod, iproute, python3, golang]
             arch:
-                package: [containerd, crun, krun, crictl, buildkit, e2fsprogs, iptables, kmod, iproute2, python, go]
+                package: [containerd, crun, krun, crictl, e2fsprogs, iptables, kmod, iproute2, python, go]
         service:
             # THE SERVICE, which is WI-8's own requirement: containerd is a daemon, so a bed that starts it
             # with a shell & cannot survive its own step. The same name appears twice because the two init
@@ -52,12 +54,6 @@ layer-containerd:
               # DISABLED, and `enable:` defaults to false. The field is `enable`, not `enabled` -
               # spec/schema/boxmetadata.cue:55, and CUE's closed schema rejects the wrong spelling.
               enable: true
-            - name: buildkit
-              use_packaged: buildkit.service
-              # CONTAINERD.md §2: the Arch package ships the unit disabled; until it runs,
-              # `nerdctl build` fails `no buildkit host is available, tried 2 candidates`.
-              enable: true
-              distro: [arch, cachyos]
         plan:
             # The daemon needs /var/lib/containerd and /run/containerd. The host daemon runs as root
             # (the packaged unit), so the two ROOTS and the blockfile directory this layer creates are
